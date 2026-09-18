@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>sealedinput probe</title>
+<form action="https://api.example.invalid/enroll">
+  <input name="plain" value="typed-plaintext">
+  <sealedinput name="ssn" required></sealedinput>
+</form>
+<pre id="out"></pre>
+<script>
+  const el = document.querySelector('sealedinput');
+  const lines = [
+    'constructor=' + el.constructor.name,
+    'is-form-control=' + (document.forms[0].elements.namedItem('ssn') !== null),
+    'has-value-prop=' + ('value' in el),
+    'formdata-has-ssn=' + new FormData(document.forms[0]).has('ssn'),
+    'formdata-plain=' + new FormData(document.forms[0]).get('plain'),
+    'ua=' + navigator.userAgent,
+  ];
+  document.getElementById('out').textContent = lines.join('\n');
+</script>
