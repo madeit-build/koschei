@@ -477,6 +477,27 @@ implementation.
   recipient is already a party the user has a relationship with, but the frame
   should not become a tracking surface.
 
+## Security boundary
+
+This proposal defends against **script and everything downstream of the
+browser**: page JavaScript, dependencies, extensions' content scripts (natively),
+the TLS-terminating edge, and the recipient's own logs. It does not defend
+against a compromised renderer process. Neither does any existing form control,
+Content Security Policy, or Trusted Types; the platform's security features
+assume an intact renderer, and this one is held to the same bar, not a higher
+one.
+
+The specification does not say where a user agent keeps the plaintext before
+sealing. A UA **may** implement trusted-path input, in which the process that
+first receives keystrokes seals them and hands the renderer only ciphertext and
+a character count, so that a renderer memory disclosure cannot recover the
+value. Ladybird's topology, where one process brokers both key events and the
+final frame, is an existence proof that a real engine's shape can support this
+(see [docs/research/native-feasibility-ladybird.md](../research/native-feasibility-ladybird.md),
+"Beyond v1"). Chromium's and WebKit's topologies differ, and the cost there is
+theirs to judge. Nothing in the API surface changes between the two
+implementation strategies.
+
 ## What a native implementation does differently
 
 The polyfill's cross-origin iframe is a stand-in. A native `<sealedinput>` would:
@@ -543,6 +564,10 @@ The polyfill's cross-origin iframe is a stand-in. A native `<sealedinput>` would
   quo. Browser vendors have prioritized authentication. The constituency for the
   non-payment, non-auth case (identifiers, secrets, health data) has had no
   champion.
+- **Developer demand.** Not yet gathered directly. The market signal is in the
+  prior-art survey, §4: four independent vendors sell the iframe workaround, and
+  every PCI-scoped merchant on the web uses one. The `writeonly` proposal died
+  for want of this evidence, so it is the gap to close before public posting.
 - **Positive precedent.** Chrome shipped the Digital Credentials API with
   HPKE-encrypted responses the page cannot read (2025). Apple Pay JS has returned
   merchant-encrypted tokens to page script for a decade. The shape is accepted;

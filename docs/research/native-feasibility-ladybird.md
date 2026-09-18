@@ -48,18 +48,71 @@ Paths are relative to the Ladybird checkout. Line numbers are at `1010a932`.
 
 ## What it does not prove
 
-- **Renderer memory isolation.** The plaintext exists inside the `WebContent`
-  process, as a `Utf16String` member and as a `DOM::Text` node (the same place
-  `<input type=password>` keeps it today, see
-  `HTMLInputElement.cpp:1270-1272`, `set_is_password_input` only affects
-  painting). Mike West's 2014 nonce-substitution design, where the privileged
-  process holds the value and swaps it in at the network layer, would mean
-  moving sealing into `RequestServer`. Real browser architecture work, out of
-  scope for a demo, and the memo should say so plainly.
+- **Renderer memory isolation.** In v1 the plaintext exists inside the
+  `WebContent` process, as a `Utf16String` member and as a `DOM::Text` node in
+  the UA shadow tree. That is the same place `<input type=password>` keeps it
+  today (`HTMLInputElement.cpp:1270-1272`; `set_is_password_input` only affects
+  painting). v1 defends against *script*: no IDL surface, no JS-heap object. It
+  does not defend against a renderer memory disclosure (use-after-free read,
+  speculative-execution gadget, compromised `WebContent`). Neither does any
+  existing form control, CSP, or Trusted Types; the platform's security features
+  assume an intact renderer. See [Beyond v1](#beyond-v1-trusted-path-input) for
+  what would.
 - **Extension threat.** Ladybird has no extension system, so the polyfill's
   weakest row cannot be demonstrated either way here. The argument stays
   architectural.
 - **Autofill and password-manager integration.** Ladybird has neither yet.
+
+## Beyond v1: trusted-path input
+
+An earlier draft of this memo said keeping plaintext out of the renderer "would
+mean moving sealing into `RequestServer`." That was the wrong process. Mike
+West's 2014 nonce-substitution design (privileged process fills the field with a
+nonce, network layer swaps in the real value) only works for *autofilled*
+values, which never had to pass through the renderer. A *typed* value enters the
+renderer at the keyboard, so a network-layer fix is too late. `RequestServer`
+terminates TLS (curl, in-process) and receives the request body as a finished
+`ByteBuffer` in `start_request`; it never needs to change, because in every
+design here `WebContent` only ever submits ciphertext.
+
+Ladybird's actual topology, from the IPC definitions at `1010a932`:
+
+```
+UI process  --key_event-->  Compositor  --key_event-->  WebContent
+WebContent  --update_display_list-->  Compositor  -->  pixels
+WebContent  --start_request(body)-->  RequestServer  --TLS-->  network
+```
+
+`WebContent` receives key events from the Compositor
+(`Services/WebContent/ConnectionFromClient.cpp:448`,
+`m_compositor_connection->on_key_event`), and does not paint: it ships a display
+list to the Compositor (`Services/Compositor/CompositorWebContentServer.ipc:36`),
+which owns the final frame. One privileged process already sits on both the
+input path and the output path. That is the pair a trusted input surface needs,
+and most engines would have to add a process or an IPC channel to get it.
+
+The architecture: when a sealed field has focus, the Compositor stops forwarding
+its keystrokes. It accumulates the plaintext, seals per keystroke, and sends
+`WebContent` the envelope plus a character count. `WebContent` holds ciphertext
+and a number.
+
+| Slice | What it needs | What it proves | Rough cost |
+|---|---|---|---|
+| **v2, masked only** | Focus tracking across the Compositor boundary; a `sealed_input_*` IPC pair; Compositor-side HPKE (reuses v1's `LibCrypto/HPKE`); `WebContent` renders N bullets from the count | Plaintext never enters the renderer for password, SSN, CSC, and any other masked field. A compromised `WebContent` cannot read it. | ~1 week |
+| **v3, visible text** | Compositor paints the characters into the field's rectangle as an overlay it owns, matching the renderer's font and layout; IME/composition routed to the Compositor; accessibility tree for text that is not in the renderer | Same guarantee for card numbers and anything shown as typed. A trusted display surface, the same idea as Android Protected Confirmation. | Weeks. Real browser work. |
+
+Closing the last hole (a compromised renderer naming a wrong recipient key) means
+the Compositor fetches the well-known itself via `RequestServer` for the action
+origin `WebContent` names, plus `--site-isolation` so one site's renderer cannot
+name another site's action. Both mechanisms exist in this codebase.
+
+**This is not required for the proposal and should not be built speculatively.**
+Chromium's input path is browser process to renderer with no compositor seam;
+WebKit differs again. A trusted-path demo in Ladybird is evidence that *an*
+engine's shape supports it, not that Chromium's does, and a reviewer from either
+would say so. It belongs in the explainer as a "UA may" implementation note with
+this topology as the existence proof. Build the v2 slice only if a named
+reviewer asks to see it.
 
 ## Effort estimate
 
