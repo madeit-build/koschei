@@ -16,7 +16,6 @@ export class SealedInputElement extends HTMLElement {
   #recipientOrigin: string | null = null;
   #envelope = '';
   #ready = false;
-  #started = false;
   #onMessage = (event: MessageEvent) => this.#handleMessage(event);
 
   constructor() {
@@ -64,14 +63,18 @@ export class SealedInputElement extends HTMLElement {
 
   connectedCallback(): void {
     window.addEventListener('message', this.#onMessage);
-    if (!this.#started) {
-      this.#started = true;
-      void this.#start();
-    }
+    void this.#start();
   }
 
   disconnectedCallback(): void {
     window.removeEventListener('message', this.#onMessage);
+    this.#iframe?.remove();
+    this.#iframe = null;
+    this.#recipientOrigin = null;
+    this.#ready = false;
+    this.#markUnavailable();
+    this.#internals.states.delete('ready');
+    this.#internals.states.delete('error');
   }
 
   attributeChangedCallback(name: string): void {
@@ -132,7 +135,7 @@ export class SealedInputElement extends HTMLElement {
   async #start(): Promise<void> {
     if (!window.isSecureContext) return this.#fail('insecure-context');
     try {
-      const { action } = resolveFormAction(this.#internals.form);
+      const { action } = resolveFormAction(this.#internals.form, document.baseURI);
       const info = await discoverRecipient(action.href);
       this.#recipientOrigin = info.recipientOrigin;
       const iframe = document.createElement('iframe');
@@ -167,7 +170,7 @@ export class SealedInputElement extends HTMLElement {
         this.#envelope = '';
         this.#internals.setFormValue('');
         this.#internals.setValidity(this.hasAttribute('required') ? { customError: true } : {}, INVALID_MESSAGE);
-        if (this.hasAttribute('disabled')) this.#post({ type: 'sealed-input:disabled', disabled: true });
+        if (this.matches(':disabled')) this.#post({ type: 'sealed-input:disabled', disabled: true });
         this.dispatchEvent(new CustomEvent('sealed-ready', { bubbles: true, composed: true, detail: { kid: message.kid } }));
         break;
       case 'sealed-input:error':

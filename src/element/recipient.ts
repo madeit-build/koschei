@@ -25,14 +25,17 @@ export function isPotentiallyTrustworthy(url: URL): boolean {
   return host === 'localhost' || host.endsWith('.localhost') || host === '127.0.0.1' || host === '[::1]';
 }
 
-export function resolveFormAction(form: HTMLFormElement | null): { action: URL } {
+export function resolveFormAction(
+  form: { getAttribute(name: string): string | null } | null,
+  baseUri: string,
+): { action: URL } {
   if (!form) throw new RecipientError('no-form-action', '<sealed-input> must be inside a <form>');
   const attribute = form.getAttribute('action');
   if (attribute === null || attribute.trim() === '') {
     throw new RecipientError('no-form-action', 'the owning <form> must declare an action');
   }
   try {
-    return { action: new URL(attribute, document.baseURI) };
+    return { action: new URL(attribute, baseUri) };
   } catch {
     throw new RecipientError('no-form-action', 'the form action is not a valid URL');
   }

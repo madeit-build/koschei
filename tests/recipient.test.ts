@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { discoverRecipient, isPotentiallyTrustworthy, RecipientError } from '../src/element/recipient.ts';
+import { discoverRecipient, isPotentiallyTrustworthy, RecipientError, resolveFormAction } from '../src/element/recipient.ts';
 
 const doc = {
   frame: '/sealed-input/frame.html',
@@ -46,5 +46,51 @@ describe('discoverRecipient', () => {
     await expect(discoverRecipient('https://a.example/x', fakeFetch(() => new Response('<html>', { headers: { 'content-type': 'text/html' } })))).rejects.toMatchObject({ reason: 'recipient-invalid' });
     await expect(discoverRecipient('https://a.example/x', fakeFetch(() => new Response(JSON.stringify({ frame: 'https://other.example/f', keys: doc.keys }), { headers: { 'content-type': 'application/json' } })))).rejects.toMatchObject({ reason: 'recipient-invalid' });
     await expect(discoverRecipient('https://a.example/x', fakeFetch(() => new Response(JSON.stringify({ frame: '/f', keys: [] }), { headers: { 'content-type': 'application/json' } })))).rejects.toBeInstanceOf(RecipientError);
+  });
+});
+
+function fakeForm(value: string | null): { getAttribute(name: string): string | null } {
+  return { getAttribute: () => value };
+}
+
+function catchError(run: () => unknown): unknown {
+  try {
+    run();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+describe('resolveFormAction', () => {
+  it('rejects a null form', () => {
+    const error = catchError(() => resolveFormAction(null, 'https://www.example.com/page'));
+    expect(error).toBeInstanceOf(RecipientError);
+    expect(error).toMatchObject({ reason: 'no-form-action' });
+  });
+
+  it('rejects a missing action attribute', () => {
+    const error = catchError(() => resolveFormAction(fakeForm(null), 'https://www.example.com/page'));
+    expect(error).toMatchObject({ reason: 'no-form-action' });
+  });
+
+  it('rejects a blank action attribute', () => {
+    const error = catchError(() => resolveFormAction(fakeForm('   '), 'https://www.example.com/page'));
+    expect(error).toMatchObject({ reason: 'no-form-action' });
+  });
+
+  it('rejects an unparsable action URL', () => {
+    const error = catchError(() => resolveFormAction(fakeForm('http://['), 'https://www.example.com/page'));
+    expect(error).toMatchObject({ reason: 'no-form-action' });
+  });
+
+  it('resolves a relative action against the base URI', () => {
+    const { action } = resolveFormAction(fakeForm('/enroll'), 'https://www.example.com/page');
+    expect(action.href).toBe('https://www.example.com/enroll');
+  });
+
+  it('leaves an absolute action unchanged', () => {
+    const { action } = resolveFormAction(fakeForm('https://api.example.com/enroll'), 'https://www.example.com/page');
+    expect(action.href).toBe('https://api.example.com/enroll');
   });
 });
