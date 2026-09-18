@@ -1,0 +1,63 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startServers, type DemoServers } from '../demo/serve.ts';
+import { formatDoctor, runDoctor } from '../src/server/doctor.ts';
+
+let servers: DemoServers;
+const PAGE = 4790;
+const RECIPIENT = 4791;
+
+beforeAll(async () => {
+  servers = await startServers({ pagePort: PAGE, recipientPort: RECIPIENT });
+});
+afterAll(async () => {
+  await servers.close();
+});
+
+describe('doctor', () => {
+  it('passes every check against the demo recipient and page', async () => {
+    const checks = await runDoctor({ actionUrl: `${servers.recipientOrigin}/enroll`, pageOrigin: servers.pageOrigin });
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([
+      ['well-known reachable', true],
+      ['well-known parses', true],
+      ['frame loads with frame-ancestors', true],
+      ['WebCrypto available', true],
+      ['page CSP form-action', true],
+      ['page CSP frame-src', true],
+    ]);
+    expect(formatDoctor(checks)).toContain('✓ well-known reachable');
+  });
+
+  it('reports a mismatched private key with a hint', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'koschei-'));
+    const keyPath = join(dir, 'wrong.jwk');
+    const wrong = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    await writeFile(keyPath, JSON.stringify({ ...(await crypto.subtle.exportKey('jwk', wrong.privateKey)), kid: 'demo', use: 'enc' }));
+    const checks = await runDoctor({ actionUrl: `${servers.recipientOrigin}/enroll`, privateKeyPath: keyPath });
+    const keyCheck = checks.find((c) => c.name === 'private key matches published kid');
+    expect(keyCheck?.ok).toBe(false);
+    expect(keyCheck?.hint).toMatch(/kid/);
+  });
+
+  it('reports an unreachable recipient and stops early', async () => {
+    const checks = await runDoctor({ actionUrl: 'http://localhost:1/enroll' });
+    expect(checks[0]).toMatchObject({ name: 'well-known reachable', ok: false });
+    expect(checks).toHaveLength(1);
+  });
+
+  it('flags a page without the CSP directives', async () => {
+    const checks = await runDoctor({
+      actionUrl: `${servers.recipientOrigin}/enroll`,
+      pageOrigin: servers.pageOrigin,
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `${servers.pageOrigin}/`) return new Response('<html>', { headers: { 'content-type': 'text/html' } });
+        return fetch(input, init);
+      }) as typeof fetch,
+    });
+    expect(checks.find((c) => c.name === 'page CSP form-action')).toMatchObject({ ok: false });
+    expect(checks.find((c) => c.name === 'page CSP form-action')?.hint).toContain('form-action');
+  });
+});
