@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>sealed-input demo</title>
+<style>
+  body { font: 16px system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin: 1rem 0 .25rem; }
+  input, sealed-input { width: 24ch; }
+  pre { background: #f4f4f4; padding: .75rem; overflow: auto; }
+</style>
+<body>
+<h1>sealed-input demo</h1>
+<form id="enroll" method="post" action="__RECIPIENT__/enroll">
+  <label>Full name <input name="name" autocomplete="name" required value="Ada Lovelace"></label>
+  <label>Social Security number
+    <sealed-input name="ssn" required inputmode="numeric" pattern="\d{3}-?\d{2}-?\d{4}" autocomplete="off" aria-label="Social Security number"></sealed-input>
+  </label>
+  <button>Enroll</button>
+</form>
+<h2>What page script can see</h2>
+<pre id="observed">waiting for sealed-ready…</pre>
+<h2>Server response</h2>
+<pre id="response">not submitted</pre>
+<!--
+  app.js first, sealed-input.js second: connectedCallback can fail synchronously-ish
+  (a microtask, resolved at the module-script cleanup checkpoint) on an insecure action,
+  before a later script tag would get to run. Attaching listeners before the element
+  upgrades means we never miss that first sealed-error.
+-->
+<script type="module" src="/app.js"></script>
+<script type="module" src="/sealed-input.js"></script>
+</body>
+</html>

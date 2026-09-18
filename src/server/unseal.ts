@@ -4,13 +4,16 @@ import { hpkeOpen, suite } from '../hpke.ts';
 export type UnsealCode = 'bad-envelope' | 'unknown-kid' | 'open-failed';
 
 export class UnsealError extends Error {
-  constructor(
-    public readonly code: UnsealCode,
-    message: string,
-    public readonly hint: string,
-  ) {
+  readonly code: UnsealCode;
+  readonly hint: string;
+
+  // Plain fields, not constructor parameter properties: Node's native TypeScript
+  // type-stripping (used by `node demo/serve.ts`) rejects parameter properties.
+  constructor(code: UnsealCode, message: string, hint: string) {
     super(message);
     this.name = 'UnsealError';
+    this.code = code;
+    this.hint = hint;
   }
 }
 
