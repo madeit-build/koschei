@@ -12,6 +12,10 @@ async function waitReady(page: Page): Promise<void> {
   await expect.poll(() => page.locator('sealed-input').evaluate((el) => el.matches(':state(ready)'))).toBe(true);
 }
 
+async function envelopeOf(page: Page): Promise<string> {
+  return page.locator('sealed-input').evaluate((el: HTMLElement & { value: string }) => el.value);
+}
+
 async function typeSsn(page: Page): Promise<void> {
   const frame = await sealedFrame(page);
   await frame.locator('input').pressSequentially(SSN);
@@ -57,9 +61,18 @@ test('constraints freeze on first input so validity is not a page-driven oracle'
   await waitReady(page);
   await typeSsn(page);
   const field = page.locator('sealed-input');
+  const before = await envelopeOf(page);
   expect(await field.evaluate((el: HTMLElement & { checkValidity(): boolean }) => el.checkValidity())).toBe(true);
   await field.evaluate((el) => el.setAttribute('pattern', '^9.*'));
-  await page.waitForTimeout(200);
+  const frame = await sealedFrame(page);
+  // The frame replies to every keystroke over the same postMessage channel. Sending keystrokes
+  // after setAttribute and waiting for their replies proves, by FIFO ordering, that the frame
+  // already processed (and ignored) the constraints message before either of these round-trips.
+  await frame.locator('input').press('Backspace');
+  await expect.poll(() => envelopeOf(page)).not.toBe(before);
+  const mid = await envelopeOf(page);
+  await frame.locator('input').pressSequentially('9');
+  await expect.poll(() => envelopeOf(page)).not.toBe(mid);
   expect(await field.evaluate((el: HTMLElement & { checkValidity(): boolean }) => el.checkValidity())).toBe(true);
   expect(await field.evaluate((el: HTMLElement & { validity: ValidityState }) => el.validity.patternMismatch)).toBe(false);
 });

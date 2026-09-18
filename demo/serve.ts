@@ -41,42 +41,52 @@ export async function startServers(options: { pagePort: number; recipientPort: n
 
   const recipient = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', recipientOrigin);
-    const cors = { 'Access-Control-Allow-Origin': pageOrigin, Vary: 'Origin' };
-    if (request.method === 'OPTIONS') return send(response, 204, '', { ...cors, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'content-type' });
-    if (url.pathname === '/.well-known/sealed-input') return send(response, 200, wellKnown, { ...cors, 'Content-Type': 'application/json' });
-    if (url.pathname === '/sealed-input/frame.html') {
-      return send(response, 200, await readFile(join(dist, 'frame.html')), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `frame-ancestors ${pageOrigin}` });
-    }
-    if (url.pathname === '/sealed-input/frame.js') return send(response, 200, await readFile(join(dist, 'frame.js')), { 'Content-Type': 'text/javascript' });
-    if (url.pathname === '/enroll' && request.method === 'POST') {
-      const form = new URLSearchParams(await readBody(request));
-      const fieldName = form.has('ssn') ? 'ssn' : [...form.keys()][0] ?? 'ssn';
-      try {
-        const ssn = await unseal(form.get(fieldName) ?? '', { privateKey: key.privateJwk, expect: { ...expect, name: fieldName }, onEvent: log });
-        return send(response, 200, JSON.stringify({ ok: true, last4: ssn.slice(-4) }), { ...cors, 'Content-Type': 'application/json' });
-      } catch (error) {
-        if (error instanceof UnsealError) return send(response, 400, JSON.stringify({ ok: false, code: error.code }), { ...cors, 'Content-Type': 'application/json' });
-        log({ event: 'demo.enroll.error', message: error instanceof Error ? error.message : String(error) });
-        return send(response, 500, JSON.stringify({ ok: false }), { ...cors, 'Content-Type': 'application/json' });
+    try {
+      const cors = { 'Access-Control-Allow-Origin': pageOrigin, Vary: 'Origin' };
+      if (request.method === 'OPTIONS') return send(response, 204, '', { ...cors, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'content-type' });
+      if (url.pathname === '/.well-known/sealed-input') return send(response, 200, wellKnown, { ...cors, 'Content-Type': 'application/json' });
+      if (url.pathname === '/sealed-input/frame.html') {
+        return send(response, 200, await readFile(join(dist, 'frame.html')), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `frame-ancestors ${pageOrigin}` });
       }
+      if (url.pathname === '/sealed-input/frame.js') return send(response, 200, await readFile(join(dist, 'frame.js')), { 'Content-Type': 'text/javascript' });
+      if (url.pathname === '/enroll' && request.method === 'POST') {
+        const form = new URLSearchParams(await readBody(request));
+        const fieldName = form.has('ssn') ? 'ssn' : [...form.keys()][0] ?? 'ssn';
+        try {
+          const ssn = await unseal(form.get(fieldName) ?? '', { privateKey: key.privateJwk, expect: { ...expect, name: fieldName }, onEvent: log });
+          return send(response, 200, JSON.stringify({ ok: true, last4: ssn.slice(-4) }), { ...cors, 'Content-Type': 'application/json' });
+        } catch (error) {
+          if (error instanceof UnsealError) return send(response, 400, JSON.stringify({ ok: false, code: error.code }), { ...cors, 'Content-Type': 'application/json' });
+          log({ event: 'demo.enroll.error', message: error instanceof Error ? error.message : String(error) });
+          return send(response, 500, JSON.stringify({ ok: false }), { ...cors, 'Content-Type': 'application/json' });
+        }
+      }
+      send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
+    } catch (error) {
+      log({ event: 'demo.request.error', route: url.pathname, message: error instanceof Error ? error.message : String(error) });
+      if (!response.headersSent) send(response, 500, JSON.stringify({ ok: false }), { 'Content-Type': 'application/json' });
     }
-    send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
   });
 
   const page = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', pageOrigin);
-    if (url.pathname === '/') {
-      const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', recipientOrigin);
-      const csp = [`default-src 'self'`, `script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `frame-src ${recipientOrigin}`, `form-action ${recipientOrigin}`, `connect-src ${recipientOrigin}`].join('; ');
-      return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': csp });
+    try {
+      if (url.pathname === '/') {
+        const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', recipientOrigin);
+        const csp = [`default-src 'self'`, `script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `frame-src ${recipientOrigin}`, `form-action ${recipientOrigin}`, `connect-src ${recipientOrigin}`].join('; ');
+        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': csp });
+      }
+      if (url.pathname === '/sealed-input.js') return send(response, 200, await readFile(join(dist, 'sealed-input.js')), { 'Content-Type': 'text/javascript' });
+      if (url.pathname === '/app.js') return send(response, 200, await readFile(join(here, 'app.js')), { 'Content-Type': 'text/javascript' });
+      if (url.pathname === '/insecure') {
+        const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', 'http://api.example.invalid');
+        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
+      }
+      send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
+    } catch (error) {
+      log({ event: 'demo.request.error', route: url.pathname, message: error instanceof Error ? error.message : String(error) });
+      if (!response.headersSent) send(response, 500, JSON.stringify({ ok: false }), { 'Content-Type': 'application/json' });
     }
-    if (url.pathname === '/sealed-input.js') return send(response, 200, await readFile(join(dist, 'sealed-input.js')), { 'Content-Type': 'text/javascript' });
-    if (url.pathname === '/app.js') return send(response, 200, await readFile(join(here, 'app.js')), { 'Content-Type': 'text/javascript' });
-    if (url.pathname === '/insecure') {
-      const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', 'http://api.example.invalid');
-      return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
-    }
-    send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
   });
 
   await new Promise<void>((resolve) => recipient.listen(options.recipientPort, resolve));
