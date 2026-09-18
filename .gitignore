@@ -1,0 +1,6 @@
+node_modules/
+dist/
+public/
+koschei-private.jwk
+test-results/
+playwright-report/
