@@ -47,6 +47,23 @@ describe('doctor', () => {
     expect(checks).toHaveLength(1);
   });
 
+  it('reports a malformed action URL as a failed check instead of rejecting', async () => {
+    const checks = await runDoctor({ actionUrl: 'not a url' });
+    expect(checks).toHaveLength(1);
+    expect(checks[0]).toMatchObject({ name: 'action URL parses', ok: false });
+    expect(checks[0]?.hint).toBeTruthy();
+  });
+
+  it('reports both page CSP checks as failed when the page fetch errors', async () => {
+    const checks = await runDoctor({ actionUrl: `${servers.recipientOrigin}/enroll`, pageOrigin: 'http://localhost:1' });
+    const last = checks.slice(-2);
+    expect(last.map((c) => c.name)).toEqual(['page CSP form-action', 'page CSP frame-src']);
+    for (const check of last) {
+      expect(check.ok).toBe(false);
+      expect(check.hint).toBeTruthy();
+    }
+  });
+
   it('flags a page without the CSP directives', async () => {
     const checks = await runDoctor({
       actionUrl: `${servers.recipientOrigin}/enroll`,

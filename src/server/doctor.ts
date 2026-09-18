@@ -30,8 +30,13 @@ function cspDirective(header: string | null, directive: string): string | null {
 export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const checks: DoctorCheck[] = [];
-  const action = new URL(options.actionUrl);
-  const recipientOrigin = action.origin;
+  let recipientOrigin: string;
+  try {
+    recipientOrigin = new URL(options.actionUrl).origin;
+  } catch {
+    checks.push({ name: 'action URL parses', ok: false, detail: `"${options.actionUrl}" is not an absolute URL`, hint: 'Pass the absolute form action, e.g. https://api.example.com/enroll.' });
+    return checks;
+  }
 
   let response: Response;
   try {
@@ -92,7 +97,10 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> 
         checks.push({ name: `page CSP ${directive}`, ok, detail: value === null ? `${directive} missing` : `${directive} ${value}`, ...(ok ? {} : { hint: `Add \`${directive} ${recipientOrigin}\` to the page's Content-Security-Policy so a script cannot ${directive === 'form-action' ? 'retarget the form' : 'swap in another frame'}.` }) });
       }
     } catch (error) {
-      checks.push({ name: 'page CSP form-action', ok: false, detail: error instanceof Error ? error.message : String(error), hint: 'Pass --page <embedding origin> that serves the form.' });
+      const detail = error instanceof Error ? error.message : String(error);
+      for (const directive of ['form-action', 'frame-src']) {
+        checks.push({ name: `page CSP ${directive}`, ok: false, detail, hint: 'Pass --page <embedding origin> that serves the form.' });
+      }
     }
   }
 
