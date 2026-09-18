@@ -80,7 +80,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> 
       const matches = published !== undefined && published.x === privateJwk.x && published.y === privateJwk.y;
       checks.push({ name: 'private key matches published kid', ok: matches, detail: `local kid=${privateJwk.kid ?? 'none'}, published kids=${doc.keys.map((k) => (k as { kid?: string }).kid).join(',')}`, ...(matches ? {} : { hint: 'The private JWK kid, x, and y must match a key in the well-known. Re-run koschei init or publish the matching public key.' }) });
     } catch (error) {
-      checks.push({ name: 'private key matches published kid', ok: false, detail: error instanceof Error ? error.message : String(error), hint: 'Pass --private <path to the JWK koschei init wrote>.' });
+      // Never error.message here: V8's JSON.parse message echoes bytes of the file, which is a private key.
+      checks.push({ name: 'private key matches published kid', ok: false, detail: 'could not read or parse the private key file as a JWK', hint: 'Pass --private <path to the JWK koschei init wrote>.' });
     }
   }
 

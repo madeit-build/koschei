@@ -1,3 +1,5 @@
+import { KID_PATTERN } from '../envelope.ts';
+
 export interface RecipientKeyPair {
   kid: string;
   privateJwk: JsonWebKey;
@@ -36,9 +38,10 @@ export function parseWellKnown(json: unknown): WellKnownDocument {
 export function selectEncryptionKey(doc: WellKnownDocument): { kid: string; jwk: JsonWebKey } {
   for (const jwk of doc.keys) {
     const { kty, crv, x, y, kid, use } = jwk as JsonWebKey & { kid?: unknown };
-    if (kty === 'EC' && crv === 'P-256' && typeof x === 'string' && typeof y === 'string' && use === 'enc' && typeof kid === 'string' && kid.length > 0) {
+    // The kid rides in the dot-separated envelope, so a kid the envelope cannot carry is not usable.
+    if (kty === 'EC' && crv === 'P-256' && typeof x === 'string' && typeof y === 'string' && use === 'enc' && typeof kid === 'string' && KID_PATTERN.test(kid)) {
       return { kid, jwk };
     }
   }
-  throw new TypeError('well-known has no usable key (EC P-256, use=enc, with kid)');
+  throw new TypeError('well-known has no usable key (EC P-256, use=enc, with kid matching [A-Za-z0-9_-]{1,64})');
 }

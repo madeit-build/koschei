@@ -3,6 +3,8 @@ import { discoverRecipient, RecipientError, resolveFormAction } from './recipien
 
 const UNAVAILABLE_MESSAGE = 'This field is unavailable.';
 const INVALID_MESSAGE = 'Please match the requested format.';
+const REQUIRED_MESSAGE = 'Please fill out this field.';
+const DEFAULT_READY_TIMEOUT_MS = 10_000;
 const UI_ATTRIBUTES = ['placeholder', 'inputmode', 'autocomplete', 'aria-label'] as const;
 const CONSTRAINT_ATTRIBUTES = ['required', 'pattern', 'minlength', 'maxlength'] as const;
 
@@ -17,6 +19,7 @@ export class SealedInputElement extends HTMLElement {
   #envelope = '';
   #ready = false;
   #generation = 0;
+  #readyTimer: ReturnType<typeof setTimeout> | null = null;
   #onMessage = (event: MessageEvent) => this.#handleMessage(event);
 
   constructor() {
@@ -69,6 +72,7 @@ export class SealedInputElement extends HTMLElement {
 
   disconnectedCallback(): void {
     this.#generation++;
+    this.#clearReadyTimer();
     window.removeEventListener('message', this.#onMessage);
     this.#iframe?.remove();
     this.#iframe = null;
@@ -115,9 +119,38 @@ export class SealedInputElement extends HTMLElement {
     };
   }
 
+  // Browsers fire `load` (not `error`) on a frame blocked by CSP, X-Frame-Options, or an
+  // HTTP error page, so the only reliable signal that the frame never came up is silence.
+  #readyTimeoutMs(): number {
+    const parsed = Number.parseInt(this.getAttribute('ready-timeout') ?? '', 10);
+    return Number.isNaN(parsed) || parsed <= 0 ? DEFAULT_READY_TIMEOUT_MS : parsed;
+  }
+
+  #armReadyTimer(generation: number): void {
+    this.#clearReadyTimer();
+    this.#readyTimer = setTimeout(() => {
+      this.#readyTimer = null;
+      if (generation !== this.#generation || this.#ready) return;
+      this.#fail('frame-blocked');
+    }, this.#readyTimeoutMs());
+  }
+
+  #clearReadyTimer(): void {
+    if (this.#readyTimer === null) return;
+    clearTimeout(this.#readyTimer);
+    this.#readyTimer = null;
+  }
+
   #labelText(): string | null {
     const labels = this.#internals.labels;
     return labels.length > 0 ? (labels[0] as HTMLLabelElement).textContent?.trim() ?? null : null;
+  }
+
+  // Still a single customError bit; only the generic message differs, and neither echoes input.
+  #setValidity(empty: boolean, valid: boolean): void {
+    if (valid) return this.#internals.setValidity({});
+    const message = empty && this.hasAttribute('required') ? REQUIRED_MESSAGE : INVALID_MESSAGE;
+    this.#internals.setValidity({ customError: true }, message);
   }
 
   #markUnavailable(): void {
@@ -127,6 +160,7 @@ export class SealedInputElement extends HTMLElement {
   }
 
   #fail(reason: SealedErrorReason): void {
+    this.#clearReadyTimer();
     this.#ready = false;
     this.#markUnavailable();
     this.#internals.states.delete('ready');
@@ -149,6 +183,7 @@ export class SealedInputElement extends HTMLElement {
       iframe.addEventListener('load', () => {
         if (generation !== this.#generation) return;
         this.#post({ type: 'sealed-input:init', action: action.href, name: this.name, constraints: this.#constraints(), ui: this.#ui() });
+        this.#armReadyTimer(generation);
       });
       iframe.addEventListener('error', () => {
         if (generation !== this.#generation) return;
@@ -173,12 +208,13 @@ export class SealedInputElement extends HTMLElement {
     const message = event.data;
     switch (message.type) {
       case 'sealed-input:ready':
+        this.#clearReadyTimer();
         this.#ready = true;
         this.#internals.states.delete('error');
         this.#internals.states.add('ready');
         this.#envelope = '';
         this.#internals.setFormValue('');
-        this.#internals.setValidity(this.hasAttribute('required') ? { customError: true } : {}, INVALID_MESSAGE);
+        this.#setValidity(true, !this.hasAttribute('required'));
         if (this.matches(':disabled')) this.#post({ type: 'sealed-input:disabled', disabled: true });
         this.dispatchEvent(new CustomEvent('sealed-ready', { bubbles: true, composed: true, detail: { kid: message.kid } }));
         break;
@@ -186,9 +222,10 @@ export class SealedInputElement extends HTMLElement {
         this.#fail(message.reason);
         break;
       case 'sealed-input:value':
+        if (!this.#ready) return;
         this.#envelope = message.envelope;
         this.#internals.setFormValue(message.envelope);
-        this.#internals.setValidity(message.valid ? {} : { customError: true }, INVALID_MESSAGE);
+        this.#setValidity(message.empty, message.valid);
         this.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: '' }));
         break;
       case 'sealed-input:focus-change':

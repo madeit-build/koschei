@@ -13,7 +13,7 @@
 <form id="enroll" method="post" action="__RECIPIENT__/enroll">
   <label>Full name <input name="name" autocomplete="name" required value="Ada Lovelace"></label>
   <label>Social Security number
-    <sealed-input name="ssn" required inputmode="numeric" pattern="\d{3}-?\d{2}-?\d{4}" autocomplete="off" aria-label="Social Security number"></sealed-input>
+    <sealed-input name="ssn" required inputmode="numeric" pattern="\d{3}-?\d{2}-?\d{4}" autocomplete="off" aria-label="Social Security number"__EXTRA_ATTRS__></sealed-input>
   </label>
   <button>Enroll</button>
 </form>

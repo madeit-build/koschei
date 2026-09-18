@@ -103,3 +103,52 @@ test('fails closed when the action origin is not trustworthy', async ({ page }) 
   expect(state.valid).toBe(false);
   expect(state.observed).toContain('insecure-action');
 });
+
+test('a second init from the page is ignored: slot and frozen constraints survive', async ({ page, request }) => {
+  await page.goto('/');
+  await waitReady(page);
+  await typeSsn(page);
+  const field = page.locator('sealed-input');
+  const before = await envelopeOf(page);
+
+  // A compromised page replays init with a different field name and a looser pattern.
+  const handle = await (await sealedFrame(page)).frameElement();
+  await handle.evaluate((el: HTMLIFrameElement, recipient: string) => {
+    el.contentWindow!.postMessage(
+      { type: 'sealed-input:init', action: recipient + '/other', name: 'card', constraints: { required: false, pattern: '^9.*' }, ui: {} },
+      '*',
+    );
+  }, RECIPIENT);
+
+  // Same FIFO argument as the constraints test: the reply to this keystroke proves the frame
+  // already handled (and dropped) the forged init.
+  const frame = await sealedFrame(page);
+  await frame.locator('input').pressSequentially('1');
+  await expect.poll(() => envelopeOf(page)).not.toBe(before);
+  // "123-45-67891" fails both patterns; backspacing to "123-45-6789" passes only the original
+  // SSN pattern, never the forged "^9.*", so validity here shows which constraints govern.
+  expect(await field.evaluate((el: HTMLElement & { checkValidity(): boolean }) => el.checkValidity())).toBe(false);
+  const mid = await envelopeOf(page);
+  await frame.locator('input').press('Backspace');
+  await expect.poll(() => envelopeOf(page)).not.toBe(mid);
+  expect(await field.evaluate((el: HTMLElement & { checkValidity(): boolean }) => el.checkValidity())).toBe(true);
+
+  // The envelope still opens under the original slot (field "ssn"), not the forged "card".
+  const envelope = await envelopeOf(page);
+  const enroll = await request.post(`${RECIPIENT}/enroll`, { form: { ssn: envelope } });
+  expect(enroll.status()).toBe(200);
+  expect(await enroll.json()).toEqual({ ok: true, last4: '6789' });
+});
+
+test('fails closed with frame-blocked when the frame never reports ready', async ({ page }) => {
+  await page.goto('/blocked');
+  await expect.poll(() => page.locator('sealed-input').evaluate((el) => el.matches(':state(error)')), { timeout: 10_000 }).toBe(true);
+  const state = await page.evaluate(() => {
+    const form = document.getElementById('enroll') as HTMLFormElement;
+    const field = form.querySelector('sealed-input') as HTMLElement & { value: string };
+    return { value: field.value, valid: form.checkValidity(), observed: document.getElementById('observed')?.textContent ?? '' };
+  });
+  expect(state.observed).toContain('frame-blocked');
+  expect(state.value).toBe('');
+  expect(state.valid).toBe(false);
+});

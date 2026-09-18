@@ -3,7 +3,7 @@ export const HPKE_INFO: Uint8Array = new TextEncoder().encode('sealed-input/1');
 export const PAD_BLOCK = 32;
 const P256_UNCOMPRESSED_POINT_LENGTH = 65;
 const AES_GCM_TAG_LENGTH = 16;
-const KID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const KID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/;
 
 export interface Slot {

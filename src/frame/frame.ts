@@ -10,6 +10,7 @@ let parentOrigin: string | null = null;
 let slot: Slot | null = null;
 let recipient: { kid: string; publicKey: CryptoKey } | null = null;
 let state: FieldState | null = null;
+let initStarted = false;
 let sealSequence = 0;
 
 function post(message: FromFrame): void {
@@ -17,7 +18,11 @@ function post(message: FromFrame): void {
   window.parent.postMessage(message, parentOrigin);
 }
 
+// Failure is terminal for this frame: dropping state and recipient means a later
+// disabled/reset/input message cannot re-enable the field or publish a value.
 function fail(reason: SealedErrorReason): void {
+  state = null;
+  recipient = null;
   input.disabled = true;
   input.toggleAttribute('data-unavailable', true);
   post({ type: 'sealed-input:error', reason });
@@ -63,13 +68,22 @@ async function publishValue(): Promise<void> {
     post({ type: 'sealed-input:value', envelope: '', empty: true, valid });
     return;
   }
-  const envelope = await sealValue({ value, kid: recipient.kid, recipientPublicKey: recipient.publicKey, slot });
+  let envelope: string;
+  try {
+    envelope = await sealValue({ value, kid: recipient.kid, recipientPublicKey: recipient.publicKey, slot });
+  } catch {
+    return fail('recipient-invalid');
+  }
   // A newer keystroke may have sealed while we awaited; only the latest wins.
   if (sequence !== sealSequence) return;
   post({ type: 'sealed-input:value', envelope, empty: false, valid });
 }
 
 async function handleInit(message: Extract<ToFrame, { type: 'sealed-input:init' }>): Promise<void> {
+  // One init per frame. A replayed init would relabel the slot and unfreeze the
+  // constraints while the input still holds typed text.
+  if (initStarted) return;
+  initStarted = true;
   let action: URL;
   try {
     action = new URL(message.action);

@@ -68,19 +68,26 @@ export async function startServers(options: { pagePort: number; recipientPort: n
     }
   });
 
+  const renderPage = async (recipient: string, extraAttrs: string) =>
+    (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', recipient).replaceAll('__EXTRA_ATTRS__', extraAttrs);
+  const pageCsp = (frameSrc: string) =>
+    [`default-src 'self'`, `script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `frame-src ${frameSrc}`, `form-action ${recipientOrigin}`, `connect-src ${recipientOrigin}`].join('; ');
+
   const page = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', pageOrigin);
     try {
       if (url.pathname === '/') {
-        const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', recipientOrigin);
-        const csp = [`default-src 'self'`, `script-src 'self'`, `style-src 'self' 'unsafe-inline'`, `frame-src ${recipientOrigin}`, `form-action ${recipientOrigin}`, `connect-src ${recipientOrigin}`].join('; ');
-        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': csp });
+        return send(response, 200, await renderPage(recipientOrigin, ''), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': pageCsp(recipientOrigin) });
+      }
+      // Same page, but the CSP refuses every frame: the browser fires `load` on the blocked
+      // frame and no `ready` ever arrives, so the element must time out to frame-blocked.
+      if (url.pathname === '/blocked') {
+        return send(response, 200, await renderPage(recipientOrigin, ' ready-timeout="1500"'), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': pageCsp(`'none'`) });
       }
       if (url.pathname === '/sealed-input.js') return send(response, 200, await readFile(join(dist, 'sealed-input.js')), { 'Content-Type': 'text/javascript' });
       if (url.pathname === '/app.js') return send(response, 200, await readFile(join(here, 'app.js')), { 'Content-Type': 'text/javascript' });
       if (url.pathname === '/insecure') {
-        const html = (await readFile(join(here, 'index.html'), 'utf8')).replaceAll('__RECIPIENT__', 'http://api.example.invalid');
-        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8' });
+        return send(response, 200, await renderPage('http://api.example.invalid', ''), { 'Content-Type': 'text/html; charset=utf-8' });
       }
       send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
     } catch (error) {

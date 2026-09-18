@@ -34,4 +34,11 @@ describe('recipient keys', () => {
     expect(() => selectEncryptionKey({ frame: '/f', keys: [{ kty: 'EC', crv: 'P-384', x: 'a', y: 'b', kid: 'k', use: 'enc' } as JsonWebKey] })).toThrow(TypeError);
     expect(() => selectEncryptionKey({ frame: '/f', keys: [{ kty: 'EC', crv: 'P-256', x: 'a', y: 'b', use: 'enc' } as JsonWebKey] })).toThrow(TypeError);
   });
+
+  it('skips a key whose kid the envelope cannot carry', () => {
+    const dotted = { kty: 'EC', crv: 'P-256', x: 'a', y: 'b', kid: 'v1.2', use: 'enc' } as JsonWebKey;
+    const plain = { kty: 'EC', crv: 'P-256', x: 'c', y: 'd', kid: 'v1-2', use: 'enc' } as JsonWebKey;
+    expect(() => selectEncryptionKey({ frame: '/f', keys: [dotted] })).toThrow(TypeError);
+    expect(selectEncryptionKey({ frame: '/f', keys: [dotted, plain] }).kid).toBe('v1-2');
+  });
 });
