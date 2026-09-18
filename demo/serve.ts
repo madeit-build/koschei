@@ -32,6 +32,11 @@ function send(response: ServerResponse, status: number, body: string | Buffer, h
   response.end(body);
 }
 
+// Demo-only test switch: delay the well-known for the *frame's* same-origin fetch so the
+// element's cross-origin discovery stays fast, its ready timer arms, and the frame's ready
+// arrives late. Lets the e2e suite prove a late ready cannot revive a failed field.
+let slowFrameWellKnownMs = 0;
+
 export async function startServers(options: { pagePort: number; recipientPort: number }): Promise<DemoServers> {
   const pageOrigin = `http://localhost:${options.pagePort}`;
   const recipientOrigin = `http://localhost:${options.recipientPort}`;
@@ -44,7 +49,16 @@ export async function startServers(options: { pagePort: number; recipientPort: n
     try {
       const cors = { 'Access-Control-Allow-Origin': pageOrigin, Vary: 'Origin' };
       if (request.method === 'OPTIONS') return send(response, 204, '', { ...cors, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'content-type' });
-      if (url.pathname === '/.well-known/sealed-input') return send(response, 200, wellKnown, { ...cors, 'Content-Type': 'application/json' });
+      if (url.pathname === '/__demo/slow-frame-well-known' && request.method === 'POST') {
+      slowFrameWellKnownMs = Number(url.searchParams.get('ms') ?? '0') || 0;
+      return send(response, 204, '', cors);
+    }
+    if (url.pathname === '/.well-known/sealed-input') {
+      if (slowFrameWellKnownMs > 0 && request.headers['sec-fetch-site'] === 'same-origin') {
+        await new Promise((resolve) => setTimeout(resolve, slowFrameWellKnownMs));
+      }
+      return send(response, 200, wellKnown, { ...cors, 'Content-Type': 'application/json' });
+    }
       if (url.pathname === '/sealed-input/frame.html') {
         return send(response, 200, await readFile(join(dist, 'frame.html')), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `frame-ancestors ${pageOrigin}` });
       }
@@ -81,6 +95,11 @@ export async function startServers(options: { pagePort: number; recipientPort: n
       }
       // Same page, but the CSP refuses every frame: the browser fires `load` on the blocked
       // frame and no `ready` ever arrives, so the element must time out to frame-blocked.
+      // Same page with a short ready timeout and a normal CSP; paired with the slow-frame
+      // switch above so the frame's ready arrives after the element has already failed.
+      if (url.pathname === '/slow') {
+        return send(response, 200, await renderPage(recipientOrigin, ' ready-timeout="400"'), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': pageCsp(recipientOrigin) });
+      }
       if (url.pathname === '/blocked') {
         return send(response, 200, await renderPage(recipientOrigin, ' ready-timeout="1500"'), { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': pageCsp(`'none'`) });
       }

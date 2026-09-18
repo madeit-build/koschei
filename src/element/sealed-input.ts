@@ -213,6 +213,10 @@ export class SealedInputElement extends HTMLElement {
     const message = event.data;
     switch (message.type) {
       case 'sealed-input:ready':
+        // Failure is terminal for this connection: a frame that reports ready after the
+        // element already gave up (frame-blocked) must not revive the field. Reconnecting
+        // clears the error state and starts over.
+        if (this.#internals.states.has('error')) return;
         this.#clearReadyTimer();
         this.#ready = true;
         this.#internals.states.delete('error');

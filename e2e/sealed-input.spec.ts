@@ -173,3 +173,24 @@ test('the disabled attribute reaches the frame input and clears again', async ({
   await field.evaluate((el) => el.removeAttribute('disabled'));
   await expect.poll(() => frameInput.isDisabled()).toBe(false);
 });
+
+test('a ready that arrives after frame-blocked does not revive the field', async ({ page, request }) => {
+  await request.post(`${RECIPIENT}/__demo/slow-frame-well-known?ms=1500`);
+  try {
+    await page.goto('/slow');
+    await expect.poll(() => page.locator('sealed-input').evaluate((el) => el.matches(':state(error)'))).toBe(true);
+    await expect(page.locator('#observed')).toContainText('frame-blocked');
+    // Outlive the delayed well-known so the frame's late ready has definitely been posted.
+    await page.waitForTimeout(2000);
+    const state = await page.locator('sealed-input').evaluate((el: HTMLElement & { value: string }) => ({
+      error: el.matches(':state(error)'),
+      ready: el.matches(':state(ready)'),
+      value: el.value,
+    }));
+    expect(state).toEqual({ error: true, ready: false, value: '' });
+    await expect(page.locator('#observed')).toContainText('frame-blocked');
+    await expect(page.locator('#observed')).not.toContainText('state: ready');
+  } finally {
+    await request.post(`${RECIPIENT}/__demo/slow-frame-well-known?ms=0`);
+  }
+});
