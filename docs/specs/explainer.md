@@ -171,7 +171,7 @@ loads `<origin>/.well-known/sealed-input`. The response is JSON:
 - `frame` is a same-origin path to the sealed frame document. The polyfill loads
   it in an `<iframe>`. The frame itself fetches `keys` same-origin, so no key
   material ever passes through the page.
-- Must be served over HTTPS with `Content-Type: application/json`.
+- Must be served from a potentially trustworthy origin (see below) with `Content-Type: application/json`.
 - The page-side fetch of the document is `cors`, `credentials: omit`.
 - Multiple keys are allowed; the frame uses the first key with `use: "enc"` and
   a supported curve. `kid` is carried in the envelope so the recipient can rotate.
@@ -256,11 +256,11 @@ envelope, the key, and the plaintext are never logged.
   and writes the recipient's static assets: `.well-known/sealed-input` and the
   sealed frame document with its `frame-ancestors` header hint.
 - `koschei doctor <action-url>`: checks, in order, that the well-known is
-  reachable over HTTPS with the right content type, that it parses and contains
+  reachable from a potentially trustworthy origin with the right content type, that it parses and contains
   a usable key and a same-origin `frame`, that the frame loads and sends
   `frame-ancestors`, that the local private key matches a published `kid`, that
   the runtime has the WebCrypto primitives, and that the embedding origin's CSP
-  has `frame-src` and `form-action` naming the recipient.
+  has `form-action` and `frame-src` naming the recipient.
 
 ## Key scenarios
 

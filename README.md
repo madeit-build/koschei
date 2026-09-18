@@ -108,7 +108,7 @@ another's, and a ciphertext for `ssn` will not open as `card`.
 ### 4. Check the setup
 
 ```sh
-npx koschei doctor https://api.example.com/enroll
+npx koschei doctor https://api.example.com/enroll --private ./koschei-private.jwk --page https://www.example.com
 ```
 
 ```
