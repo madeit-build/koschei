@@ -23,13 +23,35 @@ function fail(reason: SealedErrorReason): void {
   post({ type: 'sealed-input:error', reason });
 }
 
+// Carries the specific SealedErrorReason through loadRecipient's failure paths so
+// handleInit doesn't have to guess whether the network or the document was at fault.
+class FrameError extends Error {
+  constructor(
+    public readonly reason: SealedErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'FrameError';
+  }
+}
+
 async function loadRecipient(): Promise<{ kid: string; publicKey: CryptoKey }> {
-  const response = await fetch('/.well-known/sealed-input', { credentials: 'omit', cache: 'no-store' });
-  if (!response.ok) throw new Error('recipient-unreachable');
-  const doc = parseWellKnown(await response.json());
-  const { kid, jwk } = selectEncryptionKey(doc);
-  const { kid: _kid, use: _use, ...importable } = jwk as JsonWebKey & { kid?: string; use?: string };
-  return { kid, publicKey: await suite.kem.importKey('jwk', importable, true) };
+  let response: Response;
+  try {
+    response = await fetch('/.well-known/sealed-input', { credentials: 'omit', cache: 'no-store' });
+  } catch {
+    throw new FrameError('recipient-unreachable', 'well-known fetch failed');
+  }
+  if (!response.ok) throw new FrameError('recipient-unreachable', `well-known returned ${response.status}`);
+
+  try {
+    const doc = parseWellKnown(await response.json());
+    const { kid, jwk } = selectEncryptionKey(doc);
+    const { kid: _kid, use: _use, ...importable } = jwk as JsonWebKey & { kid?: string; use?: string };
+    return { kid, publicKey: await suite.kem.importKey('jwk', importable, true) };
+  } catch {
+    throw new FrameError('recipient-invalid', 'well-known is malformed or its key cannot be imported');
+  }
 }
 
 async function publishValue(): Promise<void> {
@@ -60,7 +82,7 @@ async function handleInit(message: Extract<ToFrame, { type: 'sealed-input:init' 
   try {
     recipient = await loadRecipient();
   } catch (error) {
-    return fail(error instanceof Error && error.message === 'recipient-unreachable' ? 'recipient-unreachable' : 'recipient-invalid');
+    return fail(error instanceof FrameError ? error.reason : 'recipient-invalid');
   }
 
   slot = { origin: parentOrigin as string, action: canonicalAction(action.href), name: message.name };
