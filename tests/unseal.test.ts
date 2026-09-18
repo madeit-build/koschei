@@ -86,4 +86,18 @@ describe('unseal', () => {
     expect(err.code).toBe('bad-envelope');
     expect(typeof err.hint).toBe('string');
   });
+
+  it('rejects a malformed or curve-mismatched private key with TypeError and never emits an event', async () => {
+    const r = await recipient('k1');
+    const badKey = { ...r.privateJwk, crv: 'P-384' };
+    const events: UnsealEvent[] = [];
+    await expect(unseal('sealed1.k1.AA.AA', { privateKey: badKey, expect: expect_, onEvent: (e) => events.push(e) })).rejects.toThrow(TypeError);
+    expect(events).toHaveLength(0);
+  });
+
+  it('rejects a private key with no kid with TypeError', async () => {
+    const r = await recipient('k1');
+    const { kid: _kid, ...keyWithoutKid } = r.privateJwk;
+    await expect(unseal('sealed1.k1.AA.AA', { privateKey: keyWithoutKid, expect: expect_, onEvent: silent })).rejects.toThrow(TypeError);
+  });
 });

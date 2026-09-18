@@ -65,10 +65,28 @@ async function importPrivateKey(jwk: JsonWebKey): Promise<CryptoKey> {
   return suite.kem.importKey('jwk', importable, false);
 }
 
+// Importing every private key up front, before any onEvent call, keeps a malformed or
+// curve-mismatched key a plain configuration-error TypeError rather than an unhandled
+// throw mid-unseal that would skip the "exactly one event" and "exactly three codes" contracts.
+async function importPrivateKeysByKid(keys: JsonWebKey[]): Promise<Map<string, CryptoKey>> {
+  const byKid = new Map<string, CryptoKey>();
+  for (const jwk of keys) {
+    const kid = (jwk as { kid?: unknown }).kid;
+    if (typeof kid !== 'string' || kid === '') throw new TypeError('every private key needs a kid');
+    try {
+      byKid.set(kid, await importPrivateKey(jwk));
+    } catch {
+      throw new TypeError(`private key for kid "${kid}" could not be imported as an EC P-256 key`);
+    }
+  }
+  return byKid;
+}
+
 export async function unseal(envelopeText: string, options: UnsealOptions): Promise<string> {
   const onEvent = options.onEvent ?? defaultOnEvent;
   const expected = normalizeExpect(options.expect);
   const keys = Array.isArray(options.privateKey) ? options.privateKey : [options.privateKey];
+  const privateKeysByKid = await importPrivateKeysByKid(keys);
 
   const fail = (code: UnsealCode, kid: string | null): never => {
     onEvent({ event: 'sealed-input.unseal', outcome: code, kid, expected, hint: HINTS[code] });
@@ -83,9 +101,8 @@ export async function unseal(envelopeText: string, options: UnsealOptions): Prom
     throw error;
   }
 
-  const jwk = keys.find((key) => (key as { kid?: string }).kid === envelope.kid);
-  if (!jwk) return fail('unknown-kid', envelope.kid);
-  const privateKey = await importPrivateKey(jwk);
+  const privateKey = privateKeysByKid.get(envelope.kid);
+  if (!privateKey) return fail('unknown-kid', envelope.kid);
 
   for (const origin of expected.origins) {
     try {
