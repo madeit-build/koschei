@@ -19,17 +19,29 @@ here, the crypto does not matter.
 
 ### 1. Set up the recipient
 
+Run `npm run build` first; `init` copies the built frame out of `dist/` and refuses
+to write a key until it is there.
+
 ```sh
-npx koschei init [--force]
+npm run build
+npm run koschei -- init --out ./public --private ./koschei-private.jwk --frame-ancestors https://www.example.com
 ```
 
 ```
-Wrote private key  ->  ./koschei-private.jwk          (keep this out of the browser and out of git)
-Wrote well-known   ->  ./public/.well-known/sealed-input
-Wrote sealed frame ->  ./public/sealed-input/frame.html
-Wrote frame script ->  ./public/sealed-input/frame.js
-Wrote CSP headers  ->  ./public/sealed-input/HEADERS.txt
+> koschei@0.0.0 koschei
+> node bin/koschei.ts init --out ./public --private ./koschei-private.jwk --frame-ancestors https://www.example.com
+
+wrote ./koschei-private.jwk
+wrote ./public/.well-known/sealed-input
+wrote ./public/sealed-input/frame.html
+wrote ./public/sealed-input/frame.js
+wrote ./public/sealed-input/HEADERS.txt
+
+Keep ./koschei-private.jwk out of the browser and out of git.
 ```
+
+Every flag has a default (`public`, `./koschei-private.jwk`, the current month as
+`kid`, `https://www.example.com`); pass `--force` to replace an existing key.
 
 Serve both static files from the same origin as your form's `action`. The
 well-known names the frame and carries one P-256 public key with a `kid`:
@@ -82,6 +94,9 @@ new FormData(form).get('ssn') // "sealed1.2026-09.BGx…"  (ciphertext, safe to 
 
 ### 3. Open it on the server
 
+Inside this repo, Node resolves `'koschei/server'` through `package.json`
+`exports` straight to the TypeScript source, so the import below runs as written.
+
 ```js
 import { unseal } from 'koschei/server';
 import { readFile } from 'node:fs/promises';
@@ -107,23 +122,31 @@ another's, and a ciphertext for `ssn` will not open as `card`.
 
 ### 4. Check the setup
 
+Run `npm run build` first if you have not already. This is the output against
+`npm run demo` (page on 4780, recipient on 4781):
+
 ```sh
-npx koschei doctor https://api.example.com/enroll --private ./koschei-private.jwk --page https://www.example.com
+npm run koschei -- doctor http://localhost:4781/enroll --page http://localhost:4780
 ```
 
 ```
-✓ https://api.example.com/.well-known/sealed-input  reachable, 200, application/json
-✓ well-known parses, 1 key, kid=2026-09, P-256, use=enc, frame=/sealed-input/frame.html (same-origin)
-✓ frame loads, sends frame-ancestors https://www.example.com
-✓ private key at ./koschei-private.jwk matches kid=2026-09
-✓ WebCrypto available in this runtime (ECDH, HKDF, AES-GCM)
-! Content-Security-Policy on https://www.example.com has no form-action directive
-    -> add `form-action https://api.example.com` so a script cannot retarget the form
-! Content-Security-Policy on https://www.example.com has no frame-src directive
-    -> add `frame-src https://api.example.com` so a script cannot swap in another frame
+> koschei@0.0.0 koschei
+> node bin/koschei.ts doctor http://localhost:4781/enroll --page http://localhost:4780
+
+✓ well-known reachable  200, application/json
+✓ well-known parses  1 key(s), kid=demo, frame=/sealed-input/frame.html
+✓ well-known allows page origin  Access-Control-Allow-Origin http://localhost:4780
+✓ frame loads with frame-ancestors  200, frame-ancestors http://localhost:4780
+✓ WebCrypto available  crypto.subtle present (ECDH, HKDF, AES-GCM)
+✓ page CSP form-action  form-action http://localhost:4781
+✓ page CSP frame-src  frame-src http://localhost:4781
 ```
 
-Checks run in the order they most often fail.
+Add `--private ./koschei-private.jwk` to also check that the local key matches the
+published `kid`. With `--page`, doctor confirms the well-known's
+`Access-Control-Allow-Origin` and the frame's `frame-ancestors` both name the page
+origin, the two headers most often wrong in a two-origin setup. Checks run in the
+order they most often fail, and a failing check prints what to send instead.
 
 ## The API, as proposed
 
@@ -140,10 +163,12 @@ Form-associated custom element (`static formAssociated = true`). Participates in
 | `.value` (get) | The current **envelope** string, or `""` if empty. Never the plaintext. |
 | `.value` (set) | Throws `InvalidStateError`. The page cannot seed a value it is not allowed to read. |
 | `.validity`, `.validationMessage`, `.checkValidity()`, `.reportValidity()` | Work. One `customError` bit, never which constraint failed. The message is generic (`"Please match the requested format."`), never echoes input. |
-| `input`, `change` events | Fire, with `data` and `inputType` absent. Enough for "has the user typed anything" UX. |
+| `input`, `change` events | Fire, with `data` `null` and `inputType` the empty string. Enough for "has the user typed anything" UX. |
 | `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionupdate` | Do not fire on the page. |
 | `selectionStart`, `selectionEnd`, `setSelectionRange()` | Absent. |
 | `sealed-ready` event | Fires once the recipient key is fetched and verified. Before this the field is disabled. |
+| `focus()` | Forwards to the input inside the frame over the protocol, since `delegatesFocus` stops at the iframe. |
+| `ready-timeout` attribute | Milliseconds to wait for the frame's `ready` after it loads (default `10000`). Browsers fire `load`, not `error`, on a CSP- or XFO-blocked frame, so silence is how `frame-blocked` is detected. |
 | `sealed-error` event | Fires with `reason` (`recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`). The field stays disabled. Fail closed. |
 
 ### Envelope
@@ -236,7 +261,7 @@ Three questions, answered separately, so nobody reads "sealed" as "authenticated
 - Defending against a compromised destination.
 - Preventing decoy fields. Making them costlier, yes; preventing them, no.
 
-## Dependencies (planned)
+## Dependencies
 
 - [`@hpke/core`](https://github.com/dajiaji/hpke-js): RFC 9180 on top of WebCrypto,
   runs in browsers and Node unchanged, so the client seal and the server unseal use
@@ -245,15 +270,22 @@ Three questions, answered separately, so nobody reads "sealed" as "authenticated
 - No framework. The element is vanilla so the polyfill reads as a spec sketch, not
   as a component library.
 
-## Repo layout (planned)
+## Repo layout
 
 ```
+bin/koschei.ts              CLI entry: init, doctor
 docs/
   research/prior-art.md     what exists, what stalled, why
-  specs/explainer.md        WICG-template explainer (next)
+  specs/explainer.md        WICG-template explainer
 src/
-  element/                  <sealed-input> and the sealed frame
-  frame/                    the sealed frame document, served by the recipient
+  envelope.ts, hpke.ts, seal.ts   envelope format, HPKE suite, client seal
+  element/                  <sealed-input> and recipient discovery
+  frame/                    the sealed frame document and protocol, served by the recipient
   server/                   unseal(), init, doctor
-demo/                       reference server + page proving the round trip
+demo/                       reference two-origin server + page proving the round trip
+e2e/                        Playwright browser proof (npm run e2e)
+scripts/build.ts            esbuild bundle of the element and the frame into dist/
+tests/                      vitest unit suites, including RFC 9180 known-answer tests
+vitest.config.ts
+playwright.config.ts
 ```

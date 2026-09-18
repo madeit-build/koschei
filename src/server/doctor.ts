@@ -46,6 +46,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> 
     return checks;
   }
   const contentType = response.headers.get('content-type') ?? '';
+  const allowOrigin = response.headers.get('access-control-allow-origin');
   const reachable = response.ok && contentType.startsWith('application/json');
   checks.push({ name: 'well-known reachable', ok: reachable, detail: `${response.status}, ${contentType || 'no content-type'}`, ...(reachable ? {} : { hint: 'Return 200 with Content-Type: application/json.' }) });
   if (!reachable) return checks;
@@ -64,11 +65,20 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> 
     return checks;
   }
 
+  if (options.pageOrigin) {
+    const ok = allowOrigin === options.pageOrigin || allowOrigin === '*';
+    checks.push({ name: 'well-known allows page origin', ok, detail: `Access-Control-Allow-Origin ${allowOrigin ?? 'missing'}`, ...(ok ? {} : { hint: `Send \`Access-Control-Allow-Origin: ${options.pageOrigin}\` with /.well-known/sealed-input; the element fetches it in CORS mode.` }) });
+  }
+
   try {
     const frameResponse = await fetchImpl(frameUrl.href, { credentials: 'omit', cache: 'no-store' });
     const ancestors = cspDirective(frameResponse.headers.get('content-security-policy'), 'frame-ancestors');
-    const ok = frameResponse.ok && ancestors !== null;
-    checks.push({ name: 'frame loads with frame-ancestors', ok, detail: `${frameResponse.status}, frame-ancestors ${ancestors ?? 'missing'}`, ...(ok ? {} : { hint: `Send Content-Security-Policy: frame-ancestors <embedding origin> with ${doc.frame}.` }) });
+    const allowsPage = options.pageOrigin === undefined || (ancestors !== null && ancestors.split(/\s+/).includes(options.pageOrigin));
+    const ok = frameResponse.ok && ancestors !== null && allowsPage;
+    const hint = ancestors !== null && !allowsPage
+      ? `frame-ancestors on ${doc.frame} does not include ${options.pageOrigin}; add it or the browser refuses to embed the frame.`
+      : `Send Content-Security-Policy: frame-ancestors ${options.pageOrigin ?? '<embedding origin>'} with ${doc.frame}.`;
+    checks.push({ name: 'frame loads with frame-ancestors', ok, detail: `${frameResponse.status}, frame-ancestors ${ancestors ?? 'missing'}`, ...(ok ? {} : { hint }) });
   } catch (error) {
     checks.push({ name: 'frame loads with frame-ancestors', ok: false, detail: error instanceof Error ? error.message : String(error), hint: `Serve ${doc.frame} from the recipient origin.` });
   }
@@ -86,7 +96,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorCheck[]> 
   }
 
   const webcrypto = typeof crypto?.subtle?.deriveBits === 'function';
-  checks.push({ name: 'WebCrypto available', ok: webcrypto, detail: webcrypto ? 'crypto.subtle present (ECDH, HKDF, AES-GCM)' : 'crypto.subtle missing', ...(webcrypto ? {} : { hint: 'Run on Node 20+.' }) });
+  checks.push({ name: 'WebCrypto available', ok: webcrypto, detail: webcrypto ? 'crypto.subtle present (ECDH, HKDF, AES-GCM)' : 'crypto.subtle missing', ...(webcrypto ? {} : { hint: 'Run on Node 23+.' }) });
 
   if (options.pageOrigin) {
     try {

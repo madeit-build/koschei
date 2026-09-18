@@ -22,6 +22,7 @@ describe('doctor', () => {
     expect(checks.map((c) => [c.name, c.ok])).toEqual([
       ['well-known reachable', true],
       ['well-known parses', true],
+      ['well-known allows page origin', true],
       ['frame loads with frame-ancestors', true],
       ['WebCrypto available', true],
       ['page CSP form-action', true],
@@ -62,6 +63,30 @@ describe('doctor', () => {
       expect(check.ok).toBe(false);
       expect(check.hint).toBeTruthy();
     }
+  });
+
+  it('flags a well-known that does not allow the page origin', async () => {
+    const wellKnownUrl = `${servers.recipientOrigin}/.well-known/sealed-input`;
+    const checks = await runDoctor({
+      actionUrl: `${servers.recipientOrigin}/enroll`,
+      pageOrigin: servers.pageOrigin,
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await fetch(input, init);
+        if (String(input) !== wellKnownUrl) return response;
+        return new Response(await response.text(), { status: response.status, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch,
+    });
+    const check = checks.find((c) => c.name === 'well-known allows page origin');
+    expect(check).toMatchObject({ ok: false });
+    expect(check?.hint).toContain('Access-Control-Allow-Origin');
+    expect(check?.hint).toContain(servers.pageOrigin);
+  });
+
+  it('flags a frame whose frame-ancestors omits the page origin', async () => {
+    const checks = await runDoctor({ actionUrl: `${servers.recipientOrigin}/enroll`, pageOrigin: 'http://localhost:1' });
+    const check = checks.find((c) => c.name === 'frame loads with frame-ancestors');
+    expect(check).toMatchObject({ ok: false });
+    expect(check?.hint).toContain('http://localhost:1');
   });
 
   it('flags a page without the CSP directives', async () => {

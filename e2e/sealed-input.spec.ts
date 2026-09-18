@@ -152,3 +152,24 @@ test('fails closed with frame-blocked when the frame never reports ready', async
   expect(state.value).toBe('');
   expect(state.valid).toBe(false);
 });
+
+test('form.reset() clears the sealed value and the required field goes back to invalid', async ({ page }) => {
+  await page.goto('/');
+  await waitReady(page);
+  await typeSsn(page);
+  await page.evaluate(() => (document.getElementById('enroll') as HTMLFormElement).reset());
+  await expect.poll(() => envelopeOf(page)).toBe('');
+  expect(await page.locator('sealed-input').evaluate((el: HTMLElement & { checkValidity(): boolean }) => el.checkValidity())).toBe(false);
+});
+
+test('the disabled attribute reaches the frame input and clears again', async ({ page }) => {
+  await page.goto('/');
+  await waitReady(page);
+  const field = page.locator('sealed-input');
+  const frameInput = (await sealedFrame(page)).locator('input');
+  await expect.poll(() => frameInput.isDisabled()).toBe(false);
+  await field.evaluate((el) => el.setAttribute('disabled', ''));
+  await expect.poll(() => frameInput.isDisabled()).toBe(true);
+  await field.evaluate((el) => el.removeAttribute('disabled'));
+  await expect.poll(() => frameInput.isDisabled()).toBe(false);
+});

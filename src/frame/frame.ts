@@ -147,3 +147,5 @@ input.addEventListener('input', () => {
 });
 input.addEventListener('focus', () => post({ type: 'sealed-input:focus-change', focused: true }));
 input.addEventListener('blur', () => post({ type: 'sealed-input:focus-change', focused: false }));
+// Tabbing into the iframe focuses its window, not the input; hand focus on.
+window.addEventListener('focus', () => input.focus());

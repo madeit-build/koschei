@@ -64,6 +64,11 @@ export class SealedInputElement extends HTMLElement {
   reportValidity(): boolean {
     return this.#internals.reportValidity();
   }
+  // delegatesFocus stops at the iframe; the frame moves focus into its input.
+  override focus(options?: FocusOptions): void {
+    super.focus(options);
+    this.#post({ type: 'sealed-input:focus' });
+  }
 
   connectedCallback(): void {
     window.addEventListener('message', this.#onMessage);

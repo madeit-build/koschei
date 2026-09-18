@@ -194,12 +194,12 @@ using `ElementInternals` for form value and validity.
 | `value` getter | Current envelope string, or `""`. Never plaintext. |
 | `value` setter | Throws `InvalidStateError`. |
 | `validity`, `validationMessage`, `checkValidity()`, `reportValidity()` | Work. `validity` exposes a single `customError` flag, not which constraint failed. `validationMessage` is generic and never echoes input. |
-| `input`, `change` | Dispatched. `InputEvent.data` and `inputType` are `null`. |
+| `input`, `change` | Dispatched. `InputEvent.data` is `null` and `inputType` is the empty string. |
 | `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `paste` | Not dispatched to the page. |
 | `selectionStart`, `selectionEnd`, `setSelectionRange()`, `select()` | Not present. |
-| `focus()`, `blur()`, `focus`/`blur` events | Work via `delegatesFocus`. |
+| `focus()`, `blur()`, `focus`/`blur` events | Work. `delegatesFocus` stops at the iframe, so the element forwards `focus()` to the frame's input over the protocol. |
 | `sealed-ready` (event) | Recipient frame loaded and key verified. Field enabled. |
-| `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. |
+| `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. `frame-blocked` is raised when no `sealed-input:ready` arrives within the ready timeout after the frame loads (default 10 s), since browsers fire `load` rather than `error` on a frame blocked by CSP or `X-Frame-Options`. |
 
 ### Envelope
 
@@ -461,7 +461,7 @@ implementation.
   autofill has no equivalent. The password use cases are therefore weaker in the
   polyfill than natively.
 - **Labels and accessibility.** `<label for>` does not cross a frame boundary.
-  The element delegates focus and forwards its accessible name into the frame by
+  The element forwards `focus()` and its accessible name into the frame by
   `postMessage`, but assistive technology sees an iframe containing a text field,
   not a labeled control in the page's form. Native gets this for free.
 - **Styling.** The page cannot style the frame's input. v1 of the polyfill
