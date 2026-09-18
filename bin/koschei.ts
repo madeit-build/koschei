@@ -8,7 +8,7 @@ function usage(): never {
   process.stderr.write(
     [
       'usage:',
-      '  koschei init   [--out public] [--private ./koschei-private.jwk] [--kid <kid>] [--frame-ancestors <origin>] [--dist dist]',
+      '  koschei init   [--out public] [--private ./koschei-private.jwk] [--kid <kid>] [--frame-ancestors <origin>] [--dist dist] [--force]',
       '  koschei doctor <action-url> [--private ./koschei-private.jwk] [--page <embedding-origin>]',
       '',
     ].join('\n'),
@@ -25,6 +25,7 @@ if (command === 'init') {
       kid: { type: 'string', default: new Date().toISOString().slice(0, 7) },
       'frame-ancestors': { type: 'string', default: 'https://www.example.com' },
       dist: { type: 'string', default: 'dist' },
+      force: { type: 'boolean', default: false },
     },
   });
   const written = await runInit({
@@ -33,6 +34,7 @@ if (command === 'init') {
     kid: values.kid,
     frameAncestors: values['frame-ancestors'],
     distDir: values.dist,
+    force: values.force,
   });
   for (const path of written) process.stdout.write(`wrote ${path}\n`);
   process.stdout.write(`\nKeep ${values.private} out of the browser and out of git.\n`);

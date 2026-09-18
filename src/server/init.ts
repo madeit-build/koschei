@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DEFAULT_FRAME_PATH, generateRecipientKey, wellKnownDocument } from './keys.ts';
 
@@ -8,13 +8,25 @@ export interface InitOptions {
   kid: string;
   frameAncestors: string;
   distDir: string;
+  force?: boolean;
 }
 
 export async function runInit(options: InitOptions): Promise<string[]> {
+  // Check if private key file already exists
+  try {
+    await stat(options.privateKeyPath);
+    if (!options.force) {
+      throw new Error(`${options.privateKeyPath} already exists; pass --force to overwrite it`);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+
   const pair = await generateRecipientKey(options.kid);
   const written: string[] = [];
 
   await writeFile(options.privateKeyPath, JSON.stringify(pair.privateJwk, null, 2) + '\n', { mode: 0o600 });
+  await chmod(options.privateKeyPath, 0o600);
   written.push(options.privateKeyPath);
 
   const wellKnownPath = join(options.outDir, '.well-known', 'sealed-input');
