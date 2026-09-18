@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, readFile, stat, chmod } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runInit } from '../src/server/init.ts';
@@ -49,6 +49,19 @@ describe('runInit', () => {
     const jsContent = await readFile(frameJsPath, 'utf-8');
     expect(htmlContent).toBe('<html></html>');
     expect(jsContent).toBe('console.log("frame");');
+  });
+
+  it('rejects a missing dist asset before writing any private key', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'koschei-init-'));
+    const distDir = await mkdtemp(join(tmpdir(), 'koschei-dist-'));
+    const privateKeyPath = join(tempDir, 'private.jwk');
+    await writeFile(join(distDir, 'frame.html'), '<html></html>');
+    // frame.js deliberately absent
+
+    await expect(
+      runInit({ outDir: join(tempDir, 'public'), privateKeyPath, kid: 'k', frameAncestors: 'https://example.com', distDir }),
+    ).rejects.toThrow(/npm run build/);
+    await expect(stat(privateKeyPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('refuses to overwrite existing private key without --force', async () => {
