@@ -16,6 +16,7 @@ export class SealedInputElement extends HTMLElement {
   #recipientOrigin: string | null = null;
   #envelope = '';
   #ready = false;
+  #generation = 0;
   #onMessage = (event: MessageEvent) => this.#handleMessage(event);
 
   constructor() {
@@ -67,6 +68,7 @@ export class SealedInputElement extends HTMLElement {
   }
 
   disconnectedCallback(): void {
+    this.#generation++;
     window.removeEventListener('message', this.#onMessage);
     this.#iframe?.remove();
     this.#iframe = null;
@@ -133,22 +135,29 @@ export class SealedInputElement extends HTMLElement {
   }
 
   async #start(): Promise<void> {
+    const generation = ++this.#generation;
     if (!window.isSecureContext) return this.#fail('insecure-context');
     try {
       const { action } = resolveFormAction(this.#internals.form, document.baseURI);
       const info = await discoverRecipient(action.href);
+      if (generation !== this.#generation) return;
       this.#recipientOrigin = info.recipientOrigin;
       const iframe = document.createElement('iframe');
       iframe.src = info.frameUrl;
       iframe.referrerPolicy = 'origin';
       iframe.title = this.#ui().label ?? 'Sealed input';
       iframe.addEventListener('load', () => {
+        if (generation !== this.#generation) return;
         this.#post({ type: 'sealed-input:init', action: action.href, name: this.name, constraints: this.#constraints(), ui: this.#ui() });
       });
-      iframe.addEventListener('error', () => this.#fail('frame-blocked'));
+      iframe.addEventListener('error', () => {
+        if (generation !== this.#generation) return;
+        this.#fail('frame-blocked');
+      });
       this.#iframe = iframe;
       this.#root.append(iframe);
     } catch (error) {
+      if (generation !== this.#generation) return;
       this.#fail(error instanceof RecipientError ? error.reason : 'recipient-invalid');
     }
   }
