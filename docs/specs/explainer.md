@@ -175,7 +175,9 @@ loads `<origin>/.well-known/sealed-input`. The response is JSON:
 - The page-side fetch of the document is `cors`, `credentials: omit`.
 - Multiple keys are allowed; the frame uses the first key with `use: "enc"` and
   a supported curve. `kid` is carried in the envelope so the recipient can rotate.
-- If the form has no `action`, the resolved action is not `https:`, the document
+- If the form has no `action`, or the resolved action is not a potentially
+  trustworthy URL (`https:`, or `http:` on `localhost`, `*.localhost`,
+  `127.0.0.1`, `[::1]`, matching the platform's definition), the document
   fails to load or parse, or `frame` is not same-origin with the recipient, the
   control is disabled and dispatches `sealed-error`. There is no fallback to
   plaintext.
@@ -462,9 +464,10 @@ implementation.
   The element delegates focus and forwards its accessible name into the frame by
   `postMessage`, but assistive technology sees an iframe containing a text field,
   not a labeled control in the page's form. Native gets this for free.
-- **Styling.** The page cannot style the frame's input. The polyfill accepts a
-  constrained theme object (font, color, size), the same compromise every hosted
-  field makes.
+- **Styling.** The page cannot style the frame's input. v1 of the polyfill
+  ships a fixed system-font look and accepts no theme; a constrained theme
+  object (font, color, size) is the obvious follow-up and the same compromise
+  every hosted field makes.
 - **Extensions.** A content script with host permission for the recipient origin
   can read the frame. A native implementation keeps the plaintext out of any
   content script's reach.

@@ -9,21 +9,26 @@ replay, the CDN, the WAF, and the APM agent all see ciphertext. Only the backend
 holding the private key sees the value.
 
 This is a polyfill and an explainer for a primitive the platform does not have.
-Status: pre-code. The API below is the proposal; if it does not read well here,
-the crypto does not matter.
+Status: working prototype. `npm test` runs the unit suites including the RFC 9180
+known-answer tests; `npm run e2e` runs the two-origin browser proof; `npm run demo`
+serves the page on `http://localhost:4780` and the recipient on
+`http://localhost:4781`. The API below is the proposal; if it does not read well
+here, the crypto does not matter.
 
 ## Usage
 
 ### 1. Set up the recipient
 
 ```sh
-npx koschei init
+npx koschei init [--force]
 ```
 
 ```
 Wrote private key  ->  ./koschei-private.jwk          (keep this out of the browser and out of git)
 Wrote well-known   ->  ./public/.well-known/sealed-input
 Wrote sealed frame ->  ./public/sealed-input/frame.html
+Wrote frame script ->  ./public/sealed-input/frame.js
+Wrote CSP headers  ->  ./public/sealed-input/HEADERS.txt
 ```
 
 Serve both static files from the same origin as your form's `action`. The
