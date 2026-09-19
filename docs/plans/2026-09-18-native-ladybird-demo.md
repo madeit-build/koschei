@@ -1274,7 +1274,7 @@ out="${OUT_DIR:-$root/docs/research/assets}"
 mkdir -p "$out"
 cd "$root"
 npm run build >/dev/null
-node demo/serve.ts 2> "$out/native-demo.log" &
+node demo/serve.ts 2> "$out/native-demo.jsonl" &
 server=$!
 trap 'kill $server 2>/dev/null || true' EXIT
 sleep 1
@@ -1285,8 +1285,8 @@ for page in native native-directive; do
     --window-width 720 --window-height 320 --screenshot-path "$out/ladybird-$page.png" "http://localhost:4780/$page"
 done
 echo "--- unseal outcomes ---"
-grep -o '"event":"sealed-input.unseal","outcome":"[a-z-]*"' "$out/native-demo.log" || { echo "no unseal events logged" >&2; exit 1; }
-grep -q '"outcome":"ok"' "$out/native-demo.log"
+grep -o '"event":"sealed-input.unseal","outcome":"[a-z-]*"' "$out/native-demo.jsonl" || { echo "no unseal events logged" >&2; exit 1; }
+grep -q '"outcome":"ok"' "$out/native-demo.jsonl"
 ```
 `chmod +x` both.
 
@@ -1396,7 +1396,7 @@ Expected: `exit=0` twice, `200`, and a CSP header line containing `sealed-fields
 Patch series against Ladybird `1010a932`. See `docs/specs/native-ladybird-design.md`.
 
     LADYBIRD_DIR=~/code/scratch/ladybird native/ladybird/apply-and-build.sh   # ~1 h cold, minutes warm
-    LADYBIRD_DIR=~/code/scratch/ladybird native/ladybird/run-demo.sh          # writes docs/research/assets/ladybird-*.png and native-demo.log
+    LADYBIRD_DIR=~/code/scratch/ladybird native/ladybird/run-demo.sh          # writes docs/research/assets/ladybird-*.png and native-demo.jsonl
 
 `run-demo.sh` exits non-zero unless the recipient logged at least one `sealed-input.unseal` with `outcome: ok`.
 ```
@@ -1415,7 +1415,7 @@ git commit -m "feat: native Ladybird demo routes, patch series, and apply/run sc
 **Where:** both. Engine must be built with the series applied (it is, on `koschei-sealedinput`).
 
 **Files:**
-- Create: `docs/research/assets/ladybird-native.png`, `docs/research/assets/ladybird-native-directive.png`, `docs/research/assets/native-demo.log` (scrubbed: keep only `sealed-input.unseal` and `demo.listening` lines)
+- Create: `docs/research/assets/ladybird-native.png`, `docs/research/assets/ladybird-native-directive.png`, `docs/research/assets/native-demo.jsonl` (scrubbed: keep only `sealed-input.unseal` and `demo.listening` lines)
 - Modify: `docs/research/native-feasibility-ladybird.md` (Results section), `docs/specs/native-ladybird-design.md` (decision 6 revised: directive is Text-testable via `.headers`), `README.md` (one paragraph pointing at `native/ladybird/`)
 
 - [ ] **Step 1: Run the proof**
@@ -1428,7 +1428,7 @@ Expected: two PNGs written, `--- unseal outcomes ---` followed by at least two `
 - [ ] **Step 2: Scrub the log and view the screenshots**
 
 ```bash
-grep -E '"event":"(sealed-input.unseal|demo.listening)"' docs/research/assets/native-demo.log > /tmp/scrubbed && mv /tmp/scrubbed docs/research/assets/native-demo.log
+grep -E '"event":"(sealed-input.unseal|demo.listening)"' docs/research/assets/native-demo.jsonl > /tmp/scrubbed && mv /tmp/scrubbed docs/research/assets/native-demo.jsonl
 ```
 Open both PNGs and confirm the `#observed` block shows a `sealed1.` value and the response block shows `200 {"ok":true,"last4":...}`.
 
@@ -1444,7 +1444,7 @@ tests pass under `test-web`: `sealedinput-envelope` (element path) and
 `sealed-fields-directive` (header-delivered CSP, served by the echo server). The koschei demo
 recipient opened envelopes produced by Ladybird for both `/native` and `/native-directive`:
 
-    <paste the two `sealed-input.unseal` ... "outcome":"ok" lines from assets/native-demo.log>
+    <paste the two `sealed-input.unseal` ... "outcome":"ok" lines from assets/native-demo.jsonl>
 
 Screenshots: `assets/ladybird-native.png`, `assets/ladybird-native-directive.png`. Compare with
 `assets/ladybird-sealedinput-unknown.png` (before).
@@ -1474,6 +1474,6 @@ If the engine branch gained fix-up commits during Tasks 5 and 6, re-export the s
 - [ ] **Step 5: Commit (repo)**
 
 ```bash
-git add docs/research/native-feasibility-ladybird.md docs/research/assets/ladybird-native.png docs/research/assets/ladybird-native-directive.png docs/research/assets/native-demo.log docs/specs/native-ladybird-design.md README.md native/ladybird
+git add docs/research/native-feasibility-ladybird.md docs/research/assets/ladybird-native.png docs/research/assets/ladybird-native-directive.png docs/research/assets/native-demo.jsonl docs/specs/native-ladybird-design.md README.md native/ladybird
 git commit -m "docs: native Ladybird demo results, screenshots, and unseal proof"
 ```

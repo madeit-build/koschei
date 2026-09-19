@@ -9,7 +9,7 @@ out="${OUT_DIR:-$root/docs/research/assets}"
 mkdir -p "$out"
 cd "$root"
 npm run build >/dev/null
-node demo/serve.ts 2> "$out/native-demo.log" &
+node demo/serve.ts 2> "$out/native-demo.jsonl" &
 server=$!
 trap 'kill $server 2>/dev/null || true' EXIT
 sleep 1
@@ -20,5 +20,5 @@ for page in native native-directive; do
     --window-width 720 --window-height 320 --screenshot-path "$out/ladybird-$page.png" "http://localhost:4780/$page"
 done
 echo "--- unseal outcomes ---"
-grep -o '"event":"sealed-input.unseal","outcome":"[a-z-]*"' "$out/native-demo.log" || { echo "no unseal events logged" >&2; exit 1; }
-grep -q '"outcome":"ok"' "$out/native-demo.log"
+grep -o '"event":"sealed-input.unseal","outcome":"[a-z-]*"' "$out/native-demo.jsonl" || { echo "no unseal events logged" >&2; exit 1; }
+grep -q '"outcome":"ok"' "$out/native-demo.jsonl"

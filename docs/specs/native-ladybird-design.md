@@ -102,5 +102,8 @@ engine, never from markup. The action is the owning form's resolved action.
 - Demo routes `/native` and `/native-directive` in `demo/serve.ts`
 - Ladybird Text test under `Tests/LibWeb/Text/input/HTML/sealedinput-*.html`
   (inside the patch series)
-- `docs/research/assets/ladybird-sealedinput-native.png` (the after half of
-  the before/after) and the captured `unseal` log line in the memo
+- `docs/research/assets/ladybird-native.png` and
+  `docs/research/assets/ladybird-native-directive.png` (the two "after"
+  screenshots, element path and directive path), alongside the existing
+  `ladybird-sealedinput-unknown.png` "before", and the captured `unseal` log
+  lines in the memo

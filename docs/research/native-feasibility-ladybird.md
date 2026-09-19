@@ -149,8 +149,10 @@ parallel with the polyfill's DOM work; the only shared resources are CPU and dis
 during builds.
 
 Deliverables of that task: the patch series, a Text test in Ladybird's own
-format, a screenshot pair (Ladybird vs. Chrome-without-polyfill), and a recorded
-`unseal` of a Ladybird-produced envelope by the koschei server.
+format, a before screenshot (`ladybird-sealedinput-unknown.png`, the element as
+`HTMLUnknownElement` at `1010a932`) and two after screenshots (element path and
+directive path) in Ladybird with the series applied, and a recorded `unseal` of a
+Ladybird-produced envelope by the koschei server.
 
 ## Build on this machine
 
