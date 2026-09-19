@@ -171,11 +171,13 @@ loads `<origin>/.well-known/sealed-input`. The response is JSON:
 - `frame` is a same-origin path to the sealed frame document. The polyfill loads
   it in an `<iframe>`. The frame itself fetches `keys` same-origin, so no key
   material ever passes through the page.
-- Must be served over HTTPS with `Content-Type: application/json`.
+- Must be served from a potentially trustworthy origin (see below) with `Content-Type: application/json`.
 - The page-side fetch of the document is `cors`, `credentials: omit`.
 - Multiple keys are allowed; the frame uses the first key with `use: "enc"` and
   a supported curve. `kid` is carried in the envelope so the recipient can rotate.
-- If the form has no `action`, the resolved action is not `https:`, the document
+- If the form has no `action`, or the resolved action is not a potentially
+  trustworthy URL (`https:`, or `http:` on `localhost`, `*.localhost`,
+  `127.0.0.1`, `[::1]`, matching the platform's definition), the document
   fails to load or parse, or `frame` is not same-origin with the recipient, the
   control is disabled and dispatches `sealed-error`. There is no fallback to
   plaintext.
@@ -192,12 +194,12 @@ using `ElementInternals` for form value and validity.
 | `value` getter | Current envelope string, or `""`. Never plaintext. |
 | `value` setter | Throws `InvalidStateError`. |
 | `validity`, `validationMessage`, `checkValidity()`, `reportValidity()` | Work. `validity` exposes a single `customError` flag, not which constraint failed. `validationMessage` is generic and never echoes input. |
-| `input`, `change` | Dispatched. `InputEvent.data` and `inputType` are `null`. |
+| `input`, `change` | Dispatched. `InputEvent.data` is `null` and `inputType` is the empty string. |
 | `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `paste` | Not dispatched to the page. |
 | `selectionStart`, `selectionEnd`, `setSelectionRange()`, `select()` | Not present. |
-| `focus()`, `blur()`, `focus`/`blur` events | Work via `delegatesFocus`. |
+| `focus()`, `blur()`, `focus`/`blur` events | Work. `delegatesFocus` stops at the iframe, so the element forwards `focus()` to the frame's input over the protocol. |
 | `sealed-ready` (event) | Recipient frame loaded and key verified. Field enabled. |
-| `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. |
+| `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. `frame-blocked` is raised when no `sealed-input:ready` arrives within the ready timeout after the frame loads (default 10 s), since browsers fire `load` rather than `error` on a frame blocked by CSP or `X-Frame-Options`. |
 
 ### Envelope
 
@@ -254,11 +256,11 @@ envelope, the key, and the plaintext are never logged.
   and writes the recipient's static assets: `.well-known/sealed-input` and the
   sealed frame document with its `frame-ancestors` header hint.
 - `koschei doctor <action-url>`: checks, in order, that the well-known is
-  reachable over HTTPS with the right content type, that it parses and contains
+  reachable from a potentially trustworthy origin with the right content type, that it parses and contains
   a usable key and a same-origin `frame`, that the frame loads and sends
   `frame-ancestors`, that the local private key matches a published `kid`, that
   the runtime has the WebCrypto primitives, and that the embedding origin's CSP
-  has `frame-src` and `form-action` naming the recipient.
+  has `form-action` and `frame-src` naming the recipient.
 
 ## Key scenarios
 
@@ -459,12 +461,13 @@ implementation.
   autofill has no equivalent. The password use cases are therefore weaker in the
   polyfill than natively.
 - **Labels and accessibility.** `<label for>` does not cross a frame boundary.
-  The element delegates focus and forwards its accessible name into the frame by
+  The element forwards `focus()` and its accessible name into the frame by
   `postMessage`, but assistive technology sees an iframe containing a text field,
   not a labeled control in the page's form. Native gets this for free.
-- **Styling.** The page cannot style the frame's input. The polyfill accepts a
-  constrained theme object (font, color, size), the same compromise every hosted
-  field makes.
+- **Styling.** The page cannot style the frame's input. v1 of the polyfill
+  ships a fixed system-font look and accepts no theme; a constrained theme
+  object (font, color, size) is the obvious follow-up and the same compromise
+  every hosted field makes.
 - **Extensions.** A content script with host permission for the recipient origin
   can read the frame. A native implementation keeps the plaintext out of any
   content script's reach.
