@@ -1,0 +1,229 @@
+From e464daaa6a2a6d9cc96e729f4d1e6155129772bb Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 22:09:00 -0500
+Subject: [PATCH 5/9] LibWeb: Sealed inputs reseal on every value write, hold
+ required when untouched, and restart on reinsertion
+
+---
+ .../LibWeb/HTML/FormAssociatedElement.cpp     |  6 ++
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp    | 12 +++-
+ Libraries/LibWeb/HTML/HTMLInputElement.h      |  2 +
+ Libraries/LibWeb/HTML/SealedField.cpp         | 64 +++++++++++++++----
+ Libraries/LibWeb/HTML/SealedField.h           |  3 +
+ 5 files changed, 70 insertions(+), 17 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/FormAssociatedElement.cpp b/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
+index 2af125c8..96aeb583 100644
+--- a/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
++++ b/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
+@@ -1021,6 +1021,9 @@ void FormAssociatedTextControlElement::set_selection_direction(Optional<Utf16Str
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-selectiondirection
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_direction_binding(Optional<Utf16String> const& direction)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     // 1. If this element is an input element, and selectionDirection does not apply to this element,
+     //    throw an "InvalidStateError" DOMException.
+     TRY(validate_selection_direction_applies(*this));
+@@ -1031,6 +1034,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_direct
+ 
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_direction_binding(Utf16View direction)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     TRY(validate_selection_direction_applies(*this));
+ 
+     set_the_selection_range(m_selection_start, m_selection_end, string_to_selection_direction(direction));
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index c0747c28..e16012c4 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -612,9 +612,9 @@ void HTMLInputElement::did_edit_text_node(Utf16FlyString const& input_type, Opti
+ 
+     CSS::Invalidation::invalidate_style_after_validity_change(*this);
+ 
++    // Input events carry no data for sealed fields. The reseal itself happens in set_relevant_value, which every UA
++    // edit (typing, paste, delete, undo, redo) passes through.
+     if (m_sealed_field) {
+-        // Re-seal every edit; input events carry no data for sealed fields.
+-        m_sealed_field->reseal(m_value);
+         user_interaction_did_change_input_value(input_type, {});
+         return;
+     }
+@@ -790,6 +790,10 @@ WebIDL::ExceptionOr<void> HTMLInputElement::set_relevant_value(Utf16View value)
+         m_value = value_sanitization_algorithm(value);
+     }
+ 
++    // Re-seal on every value write (explainer: Element surface, re-seal on every input).
++    if (m_sealed_field)
++        m_sealed_field->reseal(m_value);
++
+     update_placeholder_visibility();
+     return {};
+ }
+@@ -2284,6 +2288,8 @@ void HTMLInputElement::form_associated_element_was_inserted()
+     // failure (an insecure action, say) fires. A field that is already ready keeps its key across a reinsertion.
+     if (m_sealed_field) {
+         queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
++            if (!is_connected())
++                return;
+             if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed())
+                 m_sealed_field->start();
+         });
+@@ -2300,7 +2306,7 @@ void HTMLInputElement::form_associated_element_was_removed(DOM::Node* old_parent
+     FormAssociatedElement::form_associated_element_was_removed(old_parent);
+     update_radio_button_group_registration();
+     if (m_sealed_field)
+-        m_sealed_field->reset();
++        m_sealed_field->detach();
+ }
+ 
+ void HTMLInputElement::form_associated_element_was_moved(GC::Ptr<DOM::Node> old_parent)
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index 3472a0b3..4f8157d7 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -252,6 +252,8 @@ public:
+ 
+     Optional<String> selection_direction_binding()
+     {
++        if (is_sealed_text_control())
++            return "none"_string;
+         auto direction = selection_direction();
+         if (!direction.has_value())
+             return {};
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 75b1d5b2..ff85326d 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -271,24 +271,39 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
+     m_recipient_public_key = move(recipient_public_key);
+     m_ready = true;
+     m_failed = false;
+-    // The constraint path re-applies "Please match the requested format." on the next reseal if needed.
+-    set_element_custom_validity({});
++    // Validity reflects the current value at once: an untouched required field is invalid, not blank-and-valid.
++    update_validity(m_element->relevant_value());
+     DOM::EventInit init {};
+     init.bubbles = true;
+     m_element->dispatch_event(DOM::Event::create("sealed-ready"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
+ }
+ 
++SealedField::Constraints SealedField::constraints_from_attributes() const
++{
++    Constraints constraints;
++    constraints.required = m_element->has_attribute(AttributeNames::required);
++    constraints.pattern = m_element->get_attribute(AttributeNames::pattern);
++    if (auto value = m_element->get_attribute(AttributeNames::minlength); value.has_value())
++        constraints.minlength = value->utf16_view().to_number<u32>();
++    if (auto value = m_element->get_attribute(AttributeNames::maxlength); value.has_value())
++        constraints.maxlength = value->utf16_view().to_number<u32>();
++    return constraints;
++}
++
++// Before the first non-empty input the live attributes apply; after it the frozen snapshot does.
++SealedField::Constraints SealedField::current_constraints() const
++{
++    if (m_frozen)
++        return m_constraints;
++    return constraints_from_attributes();
++}
++
+ void SealedField::freeze_constraints_if_needed()
+ {
+     if (m_frozen)
+         return;
+     m_frozen = true;
+-    m_constraints.required = m_element->has_attribute(AttributeNames::required);
+-    m_constraints.pattern = m_element->get_attribute(AttributeNames::pattern);
+-    if (auto value = m_element->get_attribute(AttributeNames::minlength); value.has_value())
+-        m_constraints.minlength = value->utf16_view().to_number<u32>();
+-    if (auto value = m_element->get_attribute(AttributeNames::maxlength); value.has_value())
+-        m_constraints.maxlength = value->utf16_view().to_number<u32>();
++    m_constraints = constraints_from_attributes();
+ }
+ 
+ // Same semantics as the polyfill's validateValue and HTML's compiled pattern regular expression: the
+@@ -314,15 +329,16 @@ static bool matches_pattern(Utf16String const& pattern, Utf16View plaintext)
+ 
+ bool SealedField::constraints_satisfied(Utf16View plaintext) const
+ {
++    auto constraints = current_constraints();
+     if (plaintext.is_empty())
+-        return !m_constraints.required;
++        return !constraints.required;
+     // HTML measures minlength/maxlength in JavaScript string length (UTF-16 code units).
+     auto length = plaintext.length_in_code_units();
+-    if (m_constraints.minlength.has_value() && length < *m_constraints.minlength)
++    if (constraints.minlength.has_value() && length < *constraints.minlength)
+         return false;
+-    if (m_constraints.maxlength.has_value() && length > *m_constraints.maxlength)
++    if (constraints.maxlength.has_value() && length > *constraints.maxlength)
+         return false;
+-    if (m_constraints.pattern.has_value() && !matches_pattern(*m_constraints.pattern, plaintext))
++    if (constraints.pattern.has_value() && !matches_pattern(*constraints.pattern, plaintext))
+         return false;
+     return true;
+ }
+@@ -376,13 +392,33 @@ void SealedField::reseal(Utf16View plaintext)
+     m_envelope = Utf16String::formatted("{}.{}.{}.{}", envelope_version, m_kid, enc, ciphertext);
+ }
+ 
++// Form reset: the value is empty again, so validity is re-derived from the live attributes (a required field is
++// invalid again). The fail-closed message stays while the field is not ready.
+ void SealedField::reset()
+ {
+     m_envelope = {};
+     m_frozen = false;
+     m_constraints = {};
+-    // A reset clears the constraint message but never the fail-closed one: a field that is not ready stays invalid.
+-    set_element_custom_validity(m_ready ? StringView {} : unavailable_message);
++    if (!m_ready)
++        return set_element_custom_validity(unavailable_message);
++    update_validity({});
++}
++
++// Removal from the document: forget the recipient entirely. The slot AAD is derived from the owning form's action,
++// and a reinsertion may land in a different form, so start() must run again from scratch.
++void SealedField::detach()
++{
++    ++m_fetch_generation;
++    if (m_fetch_controller) {
++        m_fetch_controller->stop_fetch();
++        m_fetch_controller = nullptr;
++    }
++    m_ready = false;
++    m_failed = false;
++    m_envelope = {};
++    m_frozen = false;
++    m_constraints = {};
++    set_element_custom_validity(unavailable_message);
+ }
+ 
+ }
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index ada5626d..eb071c28 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -37,6 +37,7 @@ public:
+     void start();
+     void reseal(Utf16View plaintext);
+     void reset();
++    void detach();
+ 
+     Utf16String const& envelope() const { return m_envelope; }
+     bool is_ready() const { return m_ready; }
+@@ -56,6 +57,8 @@ private:
+     void fail(StringView reason);
+     void become_ready(String kid, ByteBuffer recipient_public_key);
+     void process_well_known(ReadonlyBytes body);
++    Constraints constraints_from_attributes() const;
++    Constraints current_constraints() const;
+     void freeze_constraints_if_needed();
+     bool constraints_satisfied(Utf16View plaintext) const;
+     void update_validity(Utf16View plaintext);
+-- 
+2.55.0
+

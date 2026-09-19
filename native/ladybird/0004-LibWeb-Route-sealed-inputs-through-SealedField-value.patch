@@ -1,0 +1,631 @@
+From 077af8a091b68b23ae1f725bfe8a7cd88859a24e Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 21:51:23 -0500
+Subject: [PATCH 4/9] LibWeb: Route sealed inputs through SealedField (value,
+ events, selection, validity)
+
+---
+ .../LibWeb/HTML/FormAssociatedElement.cpp     | 24 ++++++
+ Libraries/LibWeb/HTML/FormAssociatedElement.h |  4 +
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp    | 77 +++++++++++++++++++
+ Libraries/LibWeb/HTML/HTMLInputElement.h      | 14 +++-
+ Libraries/LibWeb/HTML/LocalNavigable.cpp      | 13 ++++
+ Libraries/LibWeb/HTML/SealedField.cpp         | 26 +++++--
+ Libraries/LibWeb/HTML/SealedField.h           |  1 +
+ Libraries/LibWeb/Page/EventHandler.cpp        | 46 ++++++++++-
+ 8 files changed, 194 insertions(+), 11 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/FormAssociatedElement.cpp b/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
+index 95f509fa..2af125c8 100644
+--- a/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
++++ b/Libraries/LibWeb/HTML/FormAssociatedElement.cpp
+@@ -856,6 +856,9 @@ void FormAssociatedTextControlElement::relevant_value_was_changed()
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-select
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::select()
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     // 1. If this element is an input element, and either select() does not apply to this element
+     //    or the corresponding control has no selectable text, return.
+     auto& html_element = text_control_to_html_element();
+@@ -873,6 +876,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::select()
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-selectionstart
+ Optional<WebIDL::UnsignedLong> FormAssociatedTextControlElement::selection_start_binding() const
+ {
++    if (is_sealed_text_control())
++        return 0u;
++
+     // 1. If this element is an input element, and selectionStart does not apply to this element, return null.
+     auto const& html_element = text_control_to_html_element();
+     if (is<HTMLInputElement>(html_element)) {
+@@ -900,6 +906,9 @@ WebIDL::UnsignedLong FormAssociatedTextControlElement::selection_start() const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#textFieldSelection:dom-textarea/input-selectionstart-2
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_start_binding(Optional<WebIDL::UnsignedLong> const& value)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     // 1. If this element is an input element, and selectionStart does not apply to this element,
+     //    throw an "InvalidStateError" DOMException.
+     auto& html_element = text_control_to_html_element();
+@@ -925,6 +934,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_start_
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-selectionend
+ Optional<WebIDL::UnsignedLong> FormAssociatedTextControlElement::selection_end_binding() const
+ {
++    if (is_sealed_text_control())
++        return 0u;
++
+     // 1. If this element is an input element, and selectionEnd does not apply to this element, return
+     //    null.
+     auto const& html_element = text_control_to_html_element();
+@@ -953,6 +965,9 @@ WebIDL::UnsignedLong FormAssociatedTextControlElement::selection_end() const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#textFieldSelection:dom-textarea/input-selectionend-3
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_end_binding(Optional<WebIDL::UnsignedLong> const& value)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     // 1. If this element is an input element, and selectionEnd does not apply to this element,
+     //    throw an "InvalidStateError" DOMException.
+     auto& html_element = text_control_to_html_element();
+@@ -1025,6 +1040,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_direct
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-setrangetext
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_range_text_binding(Utf16View replacement)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     return set_range_text(replacement, m_selection_start, m_selection_end);
+ }
+ 
+@@ -1036,6 +1054,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_range_text(Utf16
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-setrangetext
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_range_text_binding(Utf16View replacement, WebIDL::UnsignedLong start, WebIDL::UnsignedLong end, Bindings::SelectionMode selection_mode)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     auto& html_element = text_control_to_html_element();
+ 
+     // 1. If this element is an input element, and setRangeText() does not apply to this element,
+@@ -1161,6 +1182,9 @@ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_range_text(Utf16
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-textarea/input-setselectionrange
+ WebIDL::ExceptionOr<void> FormAssociatedTextControlElement::set_selection_range(Optional<WebIDL::UnsignedLong> start, Optional<WebIDL::UnsignedLong> end, Optional<Utf16String> const& direction)
+ {
++    if (is_sealed_text_control())
++        return {};
++
+     // 1. If this element is an input element, and setSelectionRange() does not apply to this
+     //    element, throw an "InvalidStateError" DOMException.
+     auto& html_element = text_control_to_html_element();
+diff --git a/Libraries/LibWeb/HTML/FormAssociatedElement.h b/Libraries/LibWeb/HTML/FormAssociatedElement.h
+index 1a753311..74ce5706 100644
+--- a/Libraries/LibWeb/HTML/FormAssociatedElement.h
++++ b/Libraries/LibWeb/HTML/FormAssociatedElement.h
+@@ -277,6 +277,10 @@ public:
+     virtual HTMLElement& text_control_to_html_element() = 0;
+     HTMLElement const& text_control_to_html_element() const { return const_cast<FormAssociatedTextControlElement&>(*this).text_control_to_html_element(); }
+ 
++    // A sealed text control (see SealedField) hides its selection from script: the selection API reads as 0 and
++    // the mutators are no-ops. The UA's own editing path is unaffected.
++    virtual bool is_sealed_text_control() const { return false; }
++
+     virtual void did_edit_text_node(Utf16FlyString const& input_type, Optional<Utf16String> const& data) = 0;
+ 
+     virtual GC::Ptr<DOM::Text> form_associated_element_to_text_node() = 0;
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index fea3745c..c0747c28 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -49,6 +49,7 @@
+ #include <LibWeb/HTML/Parser/HTMLParser.h>
+ #include <LibWeb/HTML/RadioButtonGroupRegistry.h>
+ #include <LibWeb/HTML/Scripting/Environments.h>
++#include <LibWeb/HTML/SealedField.h>
+ #include <LibWeb/HTML/SelectedFile.h>
+ #include <LibWeb/HTML/SharedResourceRequest.h>
+ #include <LibWeb/HTML/Window.h>
+@@ -143,6 +144,7 @@ void HTMLInputElement::visit_edges(Cell::Visitor& visitor)
+     visitor.visit(m_slider_progress_element);
+     visitor.visit(m_slider_thumb);
+     visitor.visit(m_resource_request);
++    visitor.visit(m_sealed_field);
+ }
+ 
+ void HTMLInputElement::adopted_from(DOM::Document& old_document)
+@@ -610,6 +612,13 @@ void HTMLInputElement::did_edit_text_node(Utf16FlyString const& input_type, Opti
+ 
+     CSS::Invalidation::invalidate_style_after_validity_change(*this);
+ 
++    if (m_sealed_field) {
++        // Re-seal every edit; input events carry no data for sealed fields.
++        m_sealed_field->reseal(m_value);
++        user_interaction_did_change_input_value(input_type, {});
++        return;
++    }
++
+     user_interaction_did_change_input_value(input_type, data);
+ }
+ 
+@@ -707,6 +716,10 @@ void HTMLInputElement::did_select_files(Span<SelectedFile> selected_files, Multi
+ 
+ Utf16String HTMLInputElement::value() const
+ {
++    // Sealed fields expose the envelope, never the plaintext (explainer: Element surface, value getter).
++    if (m_sealed_field)
++        return m_sealed_field->envelope();
++
+     switch (value_attribute_mode()) {
+     // https://html.spec.whatwg.org/multipage/input.html#dom-input-value-value
+     case ValueAttributeMode::Value:
+@@ -783,6 +796,10 @@ WebIDL::ExceptionOr<void> HTMLInputElement::set_relevant_value(Utf16View value)
+ 
+ WebIDL::ExceptionOr<void> HTMLInputElement::set_value(Utf16View value)
+ {
++    // Seeding a value is a read in disguise (explainer: value setter throws).
++    if (m_sealed_field)
++        return WebIDL::InvalidStateError::create("A sealed field's value cannot be set by script"_utf16);
++
+     switch (value_attribute_mode()) {
+     // https://html.spec.whatwg.org/multipage/input.html#dom-input-value-value
+     case ValueAttributeMode::Value: {
+@@ -2163,6 +2180,9 @@ void HTMLInputElement::reset_algorithm()
+         update_placeholder_visibility();
+     }
+ 
++    if (m_sealed_field)
++        m_sealed_field->reset();
++
+     update_shadow_tree();
+ }
+ 
+@@ -2255,12 +2275,32 @@ void HTMLInputElement::form_associated_element_was_inserted()
+     // NB: Registering the element with its radio button group sets the checkedness of the other elements in the
+     //     group to false.
+     update_radio_button_group_registration();
++
++    // The sealed-fields CSP directive can turn an ordinary <input> into a sealed field by autocomplete token.
++    if (!m_sealed_field)
++        m_sealed_field = SealedField::create_if_policy_applies(HTML::relevant_realm(*this), *this);
++
++    // Discovery is queued so that a parser-created element can attach sealed-error listeners before a synchronous
++    // failure (an insecure action, say) fires. A field that is already ready keeps its key across a reinsertion.
++    if (m_sealed_field) {
++        queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
++            if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed())
++                m_sealed_field->start();
++        });
++    }
++}
++
++void HTMLInputElement::attach_sealed_field()
++{
++    m_sealed_field = SealedField::create(HTML::relevant_realm(*this), *this);
+ }
+ 
+ void HTMLInputElement::form_associated_element_was_removed(DOM::Node* old_parent)
+ {
+     FormAssociatedElement::form_associated_element_was_removed(old_parent);
+     update_radio_button_group_registration();
++    if (m_sealed_field)
++        m_sealed_field->reset();
+ }
+ 
+ void HTMLInputElement::form_associated_element_was_moved(GC::Ptr<DOM::Node> old_parent)
+@@ -3164,6 +3204,8 @@ WebIDL::ExceptionOr<void> HTMLInputElement::set_value_as_date_object(GC::Ptr<JS:
+ 
+ WebIDL::ExceptionOr<void> HTMLInputElement::set_range_text(Utf16String const& replacement)
+ {
++    if (is_sealed_text_control())
++        return {};
+     if (!selection_or_range_applies())
+         return WebIDL::InvalidStateError::create("setRangeText does not apply to this input type"_utf16);
+     return FormAssociatedTextControlElement::set_range_text(replacement.utf16_view(), selection_start(), selection_end());
+@@ -3171,6 +3213,8 @@ WebIDL::ExceptionOr<void> HTMLInputElement::set_range_text(Utf16String const& re
+ 
+ WebIDL::ExceptionOr<void> HTMLInputElement::set_range_text(Utf16String const& replacement, WebIDL::UnsignedLong start, WebIDL::UnsignedLong end, SelectionMode selection_mode)
+ {
++    if (is_sealed_text_control())
++        return {};
+     if (!selection_or_range_applies())
+         return WebIDL::InvalidStateError::create("setRangeText does not apply to this input type"_utf16);
+     return FormAssociatedTextControlElement::set_range_text(replacement, start, end, selection_mode);
+@@ -3760,6 +3804,8 @@ bool HTMLInputElement::has_reversed_range() const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-being-missing
+ bool HTMLInputElement::suffering_from_being_missing() const
+ {
++    if (m_sealed_field)
++        return false;
+     bool has_checkedness_false_for_all_elements_in_group = true;
+     bool has_required_element_in_group = false;
+     switch (type_state()) {
+@@ -3818,6 +3864,8 @@ static regex::ECMAScriptRegex& valid_email_address_regex()
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-a-type-mismatch
+ bool HTMLInputElement::suffering_from_a_type_mismatch() const
+ {
++    if (m_sealed_field)
++        return false;
+     auto input = value();
+     switch (type_state()) {
+     // https://html.spec.whatwg.org/multipage/input.html#url-state-(type%3Durl)%3Asuffering-from-a-type-mismatch
+@@ -3864,6 +3912,8 @@ bool HTMLInputElement::suffering_from_a_type_mismatch() const
+ // https://html.spec.whatwg.org/multipage/input.html#the-pattern-attribute%3Asuffering-from-a-pattern-mismatch
+ bool HTMLInputElement::suffering_from_a_pattern_mismatch() const
+ {
++    if (m_sealed_field)
++        return false;
+     // If the element's value is not the empty string, and either the element's multiple attribute is not specified or
+     // it does not apply to the input element given its type attribute's current state, and the element has a compiled
+     // pattern regular expression but that regular expression does not match the element's value, then the element is
+@@ -3905,6 +3955,8 @@ bool HTMLInputElement::suffering_from_a_pattern_mismatch() const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-an-underflow
+ bool HTMLInputElement::suffering_from_an_underflow() const
+ {
++    if (m_sealed_field)
++        return false;
+     // and the result of applying the algorithm to convert a string to a number to the string given by the element's
+     // value is a number
+     auto result = convert_string_to_number(value());
+@@ -3938,6 +3990,8 @@ bool HTMLInputElement::is_number_underflowing(double number) const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-an-overflow
+ bool HTMLInputElement::suffering_from_an_overflow() const
+ {
++    if (m_sealed_field)
++        return false;
+     // and the result of applying the algorithm to convert a string to a number to the string given by the element's
+     // value is a number
+     auto result = convert_string_to_number(value());
+@@ -3971,6 +4025,8 @@ bool HTMLInputElement::is_number_overflowing(double number) const
+ // https://html.spec.whatwg.org/multipage/input.html#the-step-attribute%3Asuffering-from-a-step-mismatch
+ bool HTMLInputElement::suffering_from_a_step_mismatch() const
+ {
++    if (m_sealed_field)
++        return false;
+     // and the result of applying the algorithm to convert a string to a number to the string given by the element's
+     // value is a number,
+     auto maybe_number = convert_string_to_number(value());
+@@ -3995,6 +4051,8 @@ bool HTMLInputElement::is_number_mismatching_step(double number) const
+ // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-bad-input
+ bool HTMLInputElement::suffering_from_bad_input() const
+ {
++    if (m_sealed_field)
++        return false;
+     auto relevant_value = this->relevant_value();
+ 
+     switch (type_state()) {
+@@ -4099,12 +4157,31 @@ bool HTMLInputElement::uses_button_layout() const
+         TypeAttributeState::Button, TypeAttributeState::Color, TypeAttributeState::FileUpload);
+ }
+ 
++// Validity is one bit for sealed fields: every individual flag is false and customError, set by SealedField,
++// carries the constraint result.
++bool HTMLInputElement::suffering_from_being_too_long() const
++{
++    if (m_sealed_field)
++        return false;
++    return FormAssociatedElement::suffering_from_being_too_long();
++}
++
++bool HTMLInputElement::suffering_from_being_too_short() const
++{
++    if (m_sealed_field)
++        return false;
++    return FormAssociatedElement::suffering_from_being_too_short();
++}
++
+ Optional<Utf16String> HTMLInputElement::selected_text_for_stringifier() const
+ {
+     // https://w3c.github.io/selection-api/#dom-selection-stringifier
+     // Used for clipboard copy and window.getSelection().toString() when this element is active.
+     if (!has_selectable_text())
+         return {};
++    // A sealed field's plaintext never reaches script, and getSelection().toString() is script.
++    if (m_sealed_field)
++        return {};
+ 
+     size_t start = this->selection_start();
+     size_t end = this->selection_end();
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index ad4e5f14..3472a0b3 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -59,7 +59,7 @@ namespace Web::HTML {
+     __ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTE("reset", ResetButton)               \
+     __ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTE("button", Button)
+ 
+-class WEB_API HTMLInputElement final
++class WEB_API HTMLInputElement
+     : public HTMLElement
+     , public FormAssociatedTextControlElement
+     , public Layout::ImageProvider
+@@ -260,6 +260,7 @@ public:
+ 
+     // ^FormAssociatedTextControlElement
+     virtual HTMLElement& text_control_to_html_element() override { return *this; }
++    virtual bool is_sealed_text_control() const override { return !!m_sealed_field; }
+     virtual void did_edit_text_node(Utf16FlyString const& input_type, Optional<Utf16String> const& data) override;
+     virtual GC::Ptr<DOM::Text> form_associated_element_to_text_node() override { return m_text_node; }
+     virtual GC::Ptr<DOM::Element> text_control_scroll_container() override { return m_inner_text_element; }
+@@ -277,14 +278,22 @@ public:
+     virtual bool suffering_from_an_overflow() const override;
+     virtual bool suffering_from_a_step_mismatch() const override;
+     virtual bool suffering_from_bad_input() const override;
++    virtual bool suffering_from_being_too_long() const override;
++    virtual bool suffering_from_being_too_short() const override;
++
++    // Non-null when this input is a sealed field, either as a <sealedinput> or by the sealed-fields CSP directive.
++    GC::Ptr<SealedField> sealed_field() const { return m_sealed_field; }
+ 
+     virtual bool is_mutable() const override;
+     virtual bool uses_button_layout() const override;
+     bool is_allowed_to_be_readonly() const;
+ 
+-private:
++protected:
+     HTMLInputElement(DOM::Document&, DOM::QualifiedName);
+ 
++    void attach_sealed_field();
++
++private:
+     void type_attribute_changed(TypeAttributeState old_state, TypeAttributeState new_state);
+     RadioButtonGroupRegistry* radio_button_group_registry();
+     void update_radio_button_group_registration();
+@@ -428,6 +437,7 @@ private:
+ 
+     TypeAttributeState m_type { TypeAttributeState::Text };
+     Utf16String m_value;
++    GC::Ptr<SealedField> m_sealed_field;
+ 
+     Utf16String m_last_src_value;
+ 
+diff --git a/Libraries/LibWeb/HTML/LocalNavigable.cpp b/Libraries/LibWeb/HTML/LocalNavigable.cpp
+index e50ccad9..3df271ed 100644
+--- a/Libraries/LibWeb/HTML/LocalNavigable.cpp
++++ b/Libraries/LibWeb/HTML/LocalNavigable.cpp
+@@ -73,6 +73,7 @@
+ #include <LibWeb/HTML/SandboxingFlagSet.h>
+ #include <LibWeb/HTML/Scripting/ClassicScript.h>
+ #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
++#include <LibWeb/HTML/SealedField.h>
+ #include <LibWeb/HTML/SessionHistoryEntry.h>
+ #include <LibWeb/HTML/SourceSnapshotParams.h>
+ #include <LibWeb/HTML/StructuredSerialize.h>
+@@ -5998,12 +5999,21 @@ void LocalNavigable::redo()
+     (void)Editing::perform_history_action(*document, Editing::HistoryAction::Redo);
+ }
+ 
++// Composition text is plaintext; a sealed <input> (see HTML::SealedField) never forwards it to script.
++static bool focused_area_is_sealed_input(DOM::Document& document)
++{
++    auto* input = as_if<HTML::HTMLInputElement>(document.focused_area().ptr());
++    return input && input->sealed_field();
++}
++
+ bool LocalNavigable::dispatch_composition_event(Utf16FlyString const& event_name, Utf16View data)
+ {
+     // https://w3c.github.io/uievents/#events-compositionevents
+     auto document = active_document();
+     if (!document || !document->is_fully_active())
+         return true;
++    if (focused_area_is_sealed_input(*document))
++        return true;
+ 
+     // https://w3c.github.io/uievents/#event-type-compositionstart
+     // Event.target: focused element processing the composition
+@@ -6130,6 +6140,9 @@ static bool input_method_target_is_still(DOM::Document& document, InputEventsTar
+ // only the matching input event.
+ static void dispatch_composition_beforeinput(DOM::Document& document, Utf16View text)
+ {
++    if (focused_area_is_sealed_input(document))
++        return;
++
+     UIEvents::InputEventInit input_event_init {};
+     input_event_init.bubbles = true;
+     input_event_init.composed = true;
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 57ecd84d..75b1d5b2 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -44,6 +44,7 @@ static constexpr StringView envelope_version = "sealed1"sv;
+ static constexpr StringView hpke_info = "sealed-input/1"sv;
+ static constexpr StringView well_known_path = "/.well-known/sealed-input"sv;
+ static constexpr StringView invalid_message = "Please match the requested format."sv;
++static constexpr StringView unavailable_message = "This field is unavailable."sv;
+ static constexpr StringView directive_name = "sealed-fields"sv;
+ static constexpr size_t pad_block = 32;
+ static constexpr size_t max_plaintext_bytes = 0xffff;
+@@ -132,13 +133,20 @@ void SealedField::visit_edges(Visitor& visitor)
+     visitor.visit(m_fetch_controller);
+ }
+ 
++// set_custom_validity takes a mutable reference; an empty message clears the custom error.
++void SealedField::set_element_custom_validity(StringView message)
++{
++    auto utf16_message = Utf16String::from_utf8(message);
++    m_element->set_custom_validity(utf16_message);
++}
++
+ void SealedField::fail(StringView reason)
+ {
+     m_failed = true;
+     m_ready = false;
+     m_envelope = {};
+-    Utf16String no_message;
+-    m_element->set_custom_validity(no_message);
++    // Fail closed: a failed field must not pass checkValidity(), so a required sealed field cannot be submitted empty.
++    set_element_custom_validity(unavailable_message);
+     dbgln("SealedField: {} for field '{}' in {}", reason, m_element->name().value_or({}), m_element->document().origin().serialize());
+ 
+     auto& realm = relevant_realm(*m_element);
+@@ -161,6 +169,8 @@ void SealedField::start()
+     }
+     m_ready = false;
+     m_envelope = {};
++    // Fail closed until the recipient key has arrived; become_ready() clears this.
++    set_element_custom_validity(unavailable_message);
+ 
+     auto& document = m_element->document();
+ 
+@@ -261,6 +271,8 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
+     m_recipient_public_key = move(recipient_public_key);
+     m_ready = true;
+     m_failed = false;
++    // The constraint path re-applies "Please match the requested format." on the next reseal if needed.
++    set_element_custom_validity({});
+     DOM::EventInit init {};
+     init.bubbles = true;
+     m_element->dispatch_event(DOM::Event::create("sealed-ready"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
+@@ -317,8 +329,7 @@ bool SealedField::constraints_satisfied(Utf16View plaintext) const
+ 
+ void SealedField::update_validity(Utf16View plaintext)
+ {
+-    Utf16String message = constraints_satisfied(plaintext) ? Utf16String {} : Utf16String::from_utf8(invalid_message);
+-    m_element->set_custom_validity(message);
++    set_element_custom_validity(constraints_satisfied(plaintext) ? StringView {} : invalid_message);
+ }
+ 
+ // Plaintext is length-prefixed and zero-padded to 32 bytes so the envelope reveals length only to a bucket.
+@@ -349,8 +360,7 @@ void SealedField::reseal(Utf16View plaintext)
+     // failing a constraint, not a recipient fault, so the field stays ready and reports invalid.
+     auto utf8 = plaintext.to_utf8_but_should_be_ported_to_utf16();
+     if (utf8.bytes().size() > max_plaintext_bytes) {
+-        auto message = Utf16String::from_utf8(invalid_message);
+-        m_element->set_custom_validity(message);
++        set_element_custom_validity(invalid_message);
+         m_envelope = {};
+         return;
+     }
+@@ -371,8 +381,8 @@ void SealedField::reset()
+     m_envelope = {};
+     m_frozen = false;
+     m_constraints = {};
+-    Utf16String no_message;
+-    m_element->set_custom_validity(no_message);
++    // A reset clears the constraint message but never the fail-closed one: a field that is not ready stays invalid.
++    set_element_custom_validity(m_ready ? StringView {} : unavailable_message);
+ }
+ 
+ }
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index c6b1df9d..ada5626d 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -59,6 +59,7 @@ private:
+     void freeze_constraints_if_needed();
+     bool constraints_satisfied(Utf16View plaintext) const;
+     void update_validity(Utf16View plaintext);
++    void set_element_custom_validity(StringView message);
+ 
+     GC::Ref<HTMLInputElement> m_element;
+     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
+diff --git a/Libraries/LibWeb/Page/EventHandler.cpp b/Libraries/LibWeb/Page/EventHandler.cpp
+index 390b8c81..216fd415 100644
+--- a/Libraries/LibWeb/Page/EventHandler.cpp
++++ b/Libraries/LibWeb/Page/EventHandler.cpp
+@@ -50,6 +50,7 @@
+ #include <LibWeb/HTML/Navigator.h>
+ #include <LibWeb/HTML/PaintConfig.h>
+ #include <LibWeb/HTML/Scripting/Environments.h>
++#include <LibWeb/HTML/SealedField.h>
+ #include <LibWeb/HighResolutionTime/TimeOrigin.h>
+ #include <LibWeb/Infra/Strings.h>
+ #include <LibWeb/Layout/TextNode.h>
+@@ -84,6 +85,30 @@ namespace Web {
+     if (auto event_result = (expression); event_result == EventResult::Cancelled) \
+         return event_result;
+ 
++// A sealed <input> (see HTML::SealedField) keeps keystrokes away from script: keyboard, beforeinput and textInput
++// events are not dispatched to the page, and typing is ignored until the recipient key has arrived.
++static HTML::HTMLInputElement* sealed_input_for(DOM::Node& node)
++{
++    auto* input = as_if<HTML::HTMLInputElement>(node);
++    if (input && input->sealed_field())
++        return input;
++    return nullptr;
++}
++
++static HTML::HTMLInputElement* sealed_input_for(InputEventsTarget& target)
++{
++    auto* text_control = as_if<HTML::FormAssociatedTextControlElement>(target);
++    if (!text_control)
++        return nullptr;
++    return sealed_input_for(text_control->text_control_to_html_element());
++}
++
++static bool sealed_input_is_not_ready(InputEventsTarget& target)
++{
++    auto* sealed = sealed_input_for(target);
++    return sealed && !sealed->sealed_field()->is_ready();
++}
++
+ static GC::Ptr<DOM::Node> associated_descendant_editing_host(DOM::Node& node)
+ {
+     if (node.is_editing_host())
+@@ -1458,8 +1483,11 @@ EventResult EventHandler::handle_keydown(UIEvents::KeyCode key, u32 modifiers, u
+ 
+             FIRE(input_event(UIEvents::EventNames::beforeinput, input_type, m_navigable, code_point));
+             FIRE(fire_text_input_event(m_navigable, "\n"_utf16));
+-            if (target->handle_return_key(input_type) != EventResult::Handled)
++            if (target->handle_return_key(input_type) != EventResult::Handled) {
++                if (sealed_input_is_not_ready(*target))
++                    return EventResult::Handled;
+                 target->handle_insert(input_type, Utf16String::from_code_point(code_point));
++            }
+ 
+             return EventResult::Handled;
+         }
+@@ -1468,6 +1496,8 @@ EventResult EventHandler::handle_keydown(UIEvents::KeyCode key, u32 modifiers, u
+         if (!should_ignore_keydown_event(code_point, modifiers, should_insert_text)) {
+             FIRE(input_event(UIEvents::EventNames::beforeinput, UIEvents::InputTypes::insertText, m_navigable, code_point));
+             FIRE(fire_text_input_event(m_navigable, Utf16String::from_code_point(code_point)));
++            if (sealed_input_is_not_ready(*target))
++                return EventResult::Handled;
+             target->handle_insert(UIEvents::InputTypes::insertText, Utf16String::from_code_point(code_point));
+             return EventResult::Handled;
+         }
+@@ -2006,6 +2036,8 @@ EventResult EventHandler::insert_pasted_content(Utf16View plain_text, Optional<U
+     auto normalized_text = Infra::normalize_newlines(plain_text);
+ 
+     FIRE(input_event(UIEvents::EventNames::beforeinput, UIEvents::InputTypes::insertFromPaste, m_navigable, normalized_text));
++    if (sealed_input_is_not_ready(*target))
++        return EventResult::Handled;
+     target->handle_insert_from_clipboard(UIEvents::InputTypes::insertFromPaste, normalized_text, html);
+ 
+     return EventResult::Handled;
+@@ -2135,6 +2167,10 @@ EventResult EventHandler::fire_keyboard_event(Utf16FlyString const& event_name,
+             }
+         }
+ 
++        // Default action proceeds; script never sees the key.
++        if (sealed_input_for(*focused_area))
++            return EventResult::Accepted;
++
+         auto event = UIEvents::KeyboardEvent::create_from_platform_event(HTML::relevant_global_object(*document), event_name, key, modifiers, code_point, repeat);
+         return focused_area->dispatch_event(event) ? EventResult::Accepted : EventResult::Cancelled;
+     }
+@@ -2170,6 +2206,10 @@ EventResult EventHandler::fire_text_input_event(HTML::LocalNavigable& navigable,
+             }
+         }
+ 
++        // The legacy textInput event carries the typed text; sealed fields never hand typed text to script.
++        if (sealed_input_for(*focused_area))
++            return EventResult::Accepted;
++
+         auto event = UIEvents::TextEvent::create(Utf16FlyString { UIEvents::EventNames::textInput }, HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(*document)));
+         event->init_text_event(UIEvents::EventNames::textInput, true, true, navigable.active_window_proxy(), data);
+         event->set_composed(true);
+@@ -2213,6 +2253,10 @@ EventResult EventHandler::input_event(Utf16FlyString const& event_name, Utf16Fly
+             }
+         }
+ 
++        // Sealed fields never hand typed text to script: beforeinput is not dispatched (explainer: Element surface).
++        if (event_name == UIEvents::EventNames::beforeinput && sealed_input_for(*focused_area))
++            return EventResult::Accepted;
++
+         auto event = UIEvents::InputEvent::create_from_platform_event(event_name, input_event_init, target_ranges_for_input_event(*document, input_type), HighResolutionTime::current_high_resolution_time(HTML::relevant_global_object(*document)));
+         return focused_area->dispatch_event(event) ? EventResult::Accepted : EventResult::Cancelled;
+     }
+-- 
+2.55.0
+

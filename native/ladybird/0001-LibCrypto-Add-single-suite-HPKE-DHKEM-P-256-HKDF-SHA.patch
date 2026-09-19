@@ -1,0 +1,358 @@
+From 9aeca46123f548d134591b7c4ea4d3d6c948dc59 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 20:55:13 -0500
+Subject: [PATCH 1/9] LibCrypto: Add single-suite HPKE (DHKEM P-256,
+ HKDF-SHA256, AES-128-GCM) with RFC 9180 A.3.1 tests
+
+---
+ Libraries/LibCrypto/CMakeLists.txt |   1 +
+ Libraries/LibCrypto/HPKE.cpp       | 191 +++++++++++++++++++++++++++++
+ Libraries/LibCrypto/HPKE.h         |  38 ++++++
+ Tests/LibCrypto/CMakeLists.txt     |   1 +
+ Tests/LibCrypto/TestHPKE.cpp       |  67 ++++++++++
+ 5 files changed, 298 insertions(+)
+ create mode 100644 Libraries/LibCrypto/HPKE.cpp
+ create mode 100644 Libraries/LibCrypto/HPKE.h
+ create mode 100644 Tests/LibCrypto/TestHPKE.cpp
+
+diff --git a/Libraries/LibCrypto/CMakeLists.txt b/Libraries/LibCrypto/CMakeLists.txt
+index 599f7902..a5a8aa08 100644
+--- a/Libraries/LibCrypto/CMakeLists.txt
++++ b/Libraries/LibCrypto/CMakeLists.txt
+@@ -24,6 +24,7 @@ set(SOURCES
+     Hash/SHA1.cpp
+     Hash/SHA2.cpp
+     Hash/SHA3.cpp
++    HPKE.cpp
+     PK/EC.cpp
+     PK/MLDSA.cpp
+     PK/MLKEM.cpp
+diff --git a/Libraries/LibCrypto/HPKE.cpp b/Libraries/LibCrypto/HPKE.cpp
+new file mode 100644
+index 00000000..316fad0d
+--- /dev/null
++++ b/Libraries/LibCrypto/HPKE.cpp
+@@ -0,0 +1,191 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <AK/Random.h>
++#include <LibCrypto/Authentication/HMAC.h>
++#include <LibCrypto/Cipher/AES.h>
++#include <LibCrypto/Curves/SECPxxxr1.h>
++#include <LibCrypto/HPKE.h>
++#include <LibCrypto/Hash/HashManager.h>
++#include <initializer_list>
++
++namespace Crypto::HPKE {
++
++static constexpr size_t Nh = 32;      // HKDF-SHA256 output
++static constexpr size_t Nsecret = 32; // DHKEM(P-256) shared secret
++static constexpr size_t Nk = 16;      // AES-128-GCM key
++static constexpr size_t Nn = 12;      // AES-GCM nonce
++static constexpr size_t Nt = 16;      // AES-GCM tag
++static constexpr size_t Npk = 65;     // uncompressed P-256 point
++
++// suite_id values from RFC 9180 §4.1 and §5.1: "KEM" || I2OSP(kem_id, 2) and "HPKE" || kem_id || kdf_id || aead_id.
++static constexpr u8 kem_suite_id[] = { 'K', 'E', 'M', 0x00, 0x10 };
++static constexpr u8 hpke_suite_id[] = { 'H', 'P', 'K', 'E', 0x00, 0x10, 0x00, 0x01, 0x00, 0x01 };
++static constexpr u8 version_label[] = { 'H', 'P', 'K', 'E', '-', 'v', '1' };
++
++static ErrorOr<ByteBuffer> concat(std::initializer_list<ReadonlyBytes> parts)
++{
++    size_t total = 0;
++    for (auto part : parts)
++        total += part.size();
++    auto out = TRY(ByteBuffer::create_uninitialized(total));
++    size_t offset = 0;
++    for (auto part : parts) {
++        out.overwrite(offset, part.data(), part.size());
++        offset += part.size();
++    }
++    return out;
++}
++
++// HKDF-Extract(salt, ikm) = HMAC-SHA256(salt, ikm). An empty salt means Nh zero bytes (RFC 5869 §2.2).
++static ErrorOr<ByteBuffer> hkdf_extract(ReadonlyBytes salt, ReadonlyBytes ikm)
++{
++    u8 zeros[Nh] = {};
++    Authentication::HMAC hmac(Hash::HashKind::SHA256, salt.is_empty() ? ReadonlyBytes { zeros, Nh } : salt);
++    return hmac.process(ikm);
++}
++
++// HKDF-Expand(prk, info, L) per RFC 5869 §2.3.
++static ErrorOr<ByteBuffer> hkdf_expand(ReadonlyBytes prk, ReadonlyBytes info, size_t length)
++{
++    auto out = TRY(ByteBuffer::create_uninitialized(0));
++    ByteBuffer previous;
++    for (u8 counter = 1; out.size() < length; ++counter) {
++        Authentication::HMAC hmac(Hash::HashKind::SHA256, prk);
++        hmac.update(previous.bytes());
++        hmac.update(info);
++        hmac.update(ReadonlyBytes { &counter, 1 });
++        previous = hmac.digest();
++        TRY(out.try_append(previous.bytes()));
++    }
++    return out.slice(0, length);
++}
++
++static ErrorOr<ByteBuffer> labeled_extract(ReadonlyBytes salt, ReadonlyBytes suite_id, StringView label, ReadonlyBytes ikm)
++{
++    auto labeled_ikm = TRY(concat({ { version_label, sizeof(version_label) }, suite_id, label.bytes(), ikm }));
++    return hkdf_extract(salt, labeled_ikm);
++}
++
++static ErrorOr<ByteBuffer> labeled_expand(ReadonlyBytes prk, ReadonlyBytes suite_id, StringView label, ReadonlyBytes info, size_t length)
++{
++    u8 length_bytes[2] = { static_cast<u8>(length >> 8), static_cast<u8>(length & 0xff) };
++    auto labeled_info = TRY(concat({ { length_bytes, 2 }, { version_label, sizeof(version_label) }, suite_id, label.bytes(), info }));
++    return hkdf_expand(prk, labeled_info, length);
++}
++
++static ReadonlyBytes kem_id()
++{
++    return { kem_suite_id, sizeof(kem_suite_id) };
++}
++
++static ReadonlyBytes hpke_id()
++{
++    return { hpke_suite_id, sizeof(hpke_suite_id) };
++}
++
++static UnsignedBigInteger p256_order()
++{
++    // Group order n of secp256r1.
++    return MUST(UnsignedBigInteger::from_base(16, "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"sv));
++}
++
++// RFC 9180 §7.1.3, DeriveKeyPair for P-256: rejection-sample a scalar in [1, n-1].
++ErrorOr<KeyPair> derive_key_pair(ReadonlyBytes ikm)
++{
++    Curves::SECP256r1 curve;
++    auto dkp_prk = TRY(labeled_extract({}, kem_id(), "dkp_prk"sv, ikm));
++    auto order = p256_order();
++    for (u32 counter = 0; counter < 256; ++counter) {
++        u8 counter_byte = static_cast<u8>(counter);
++        auto candidate = TRY(labeled_expand(dkp_prk, kem_id(), "candidate"sv, { &counter_byte, 1 }, 32));
++        candidate[0] &= 0xff; // bitmask for P-256 is 0xff
++        auto scalar = UnsignedBigInteger::import_data(candidate.bytes());
++        if (scalar.is_zero() || scalar >= order)
++            continue;
++        auto point = TRY(curve.generate_public_key(scalar));
++        return KeyPair { move(scalar), TRY(point.to_uncompressed()) };
++    }
++    return Error::from_string_literal("HPKE DeriveKeyPair exhausted 256 candidates");
++}
++
++ErrorOr<KeyPair> generate_key_pair()
++{
++    Curves::SECP256r1 curve;
++    auto scalar = TRY(curve.generate_private_key());
++    auto point = TRY(curve.generate_public_key(scalar));
++    return KeyPair { move(scalar), TRY(point.to_uncompressed()) };
++}
++
++// RFC 9180 §4.1 ExtractAndExpand over the DH x-coordinate with kem_context = enc || pkRm.
++static ErrorOr<ByteBuffer> kem_shared_secret(Curves::SECPxxxr1Point const& dh, ReadonlyBytes enc, ReadonlyBytes pkRm)
++{
++    auto dh_bytes = TRY(Curves::SECPxxxr1Point::scalar_to_bytes(dh.x, 32));
++    auto eae_prk = TRY(labeled_extract({}, kem_id(), "eae_prk"sv, dh_bytes));
++    auto kem_context = TRY(concat({ enc, pkRm }));
++    return labeled_expand(eae_prk, kem_id(), "shared_secret"sv, kem_context, Nsecret);
++}
++
++struct KeyAndNonce {
++    ByteBuffer key;
++    ByteBuffer base_nonce;
++};
++
++// RFC 9180 §5.1 KeySchedule, mode_base, no PSK, sequence number 0 so nonce == base_nonce.
++static ErrorOr<KeyAndNonce> key_schedule(ReadonlyBytes shared_secret, ReadonlyBytes info)
++{
++    auto psk_id_hash = TRY(labeled_extract({}, hpke_id(), "psk_id_hash"sv, {}));
++    auto info_hash = TRY(labeled_extract({}, hpke_id(), "info_hash"sv, info));
++    u8 mode_base = 0x00;
++    auto key_schedule_context = TRY(concat({ { &mode_base, 1 }, psk_id_hash, info_hash }));
++    auto secret = TRY(labeled_extract(shared_secret, hpke_id(), "secret"sv, {}));
++    auto key = TRY(labeled_expand(secret, hpke_id(), "key"sv, key_schedule_context, Nk));
++    auto base_nonce = TRY(labeled_expand(secret, hpke_id(), "base_nonce"sv, key_schedule_context, Nn));
++    return KeyAndNonce { move(key), move(base_nonce) };
++}
++
++ErrorOr<Sealed> seal(ReadonlyBytes recipient_public_key, ReadonlyBytes info, ReadonlyBytes aad, ReadonlyBytes plaintext, Optional<ReadonlyBytes> ephemeral_ikm)
++{
++    if (recipient_public_key.size() != Npk)
++        return Error::from_string_literal("HPKE recipient public key must be a 65-byte uncompressed point");
++    Curves::SECP256r1 curve;
++    auto pkR = TRY(Curves::SECPxxxr1Point::from_uncompressed(recipient_public_key));
++    if (!TRY(curve.is_valid_point(pkR)))
++        return Error::from_string_literal("HPKE recipient public key is not on P-256");
++
++    auto ephemeral = ephemeral_ikm.has_value() ? TRY(derive_key_pair(*ephemeral_ikm)) : TRY(generate_key_pair());
++    auto dh = TRY(curve.compute_coordinate(ephemeral.private_key, pkR));
++    auto shared_secret = TRY(kem_shared_secret(dh, ephemeral.public_key, recipient_public_key));
++    auto schedule = TRY(key_schedule(shared_secret, info));
++
++    Cipher::AESGCMCipher aead(schedule.key);
++    auto encrypted = TRY(aead.encrypt(plaintext, schedule.base_nonce, aad, Nt));
++    auto ciphertext = TRY(concat({ encrypted.ciphertext, encrypted.tag }));
++    return Sealed { move(ephemeral.public_key), move(ciphertext) };
++}
++
++ErrorOr<ByteBuffer> open(UnsignedBigInteger const& recipient_private_key, ReadonlyBytes recipient_public_key, ReadonlyBytes enc, ReadonlyBytes info, ReadonlyBytes aad, ReadonlyBytes ciphertext)
++{
++    if (enc.size() != Npk || recipient_public_key.size() != Npk)
++        return Error::from_string_literal("HPKE enc and recipient public key must be 65-byte uncompressed points");
++    if (ciphertext.size() < Nt)
++        return Error::from_string_literal("HPKE ciphertext shorter than the tag");
++    Curves::SECP256r1 curve;
++    auto pkE = TRY(Curves::SECPxxxr1Point::from_uncompressed(enc));
++    if (!TRY(curve.is_valid_point(pkE)))
++        return Error::from_string_literal("HPKE enc is not on P-256");
++
++    auto dh = TRY(curve.compute_coordinate(recipient_private_key, pkE));
++    auto shared_secret = TRY(kem_shared_secret(dh, enc, recipient_public_key));
++    auto schedule = TRY(key_schedule(shared_secret, info));
++
++    Cipher::AESGCMCipher aead(schedule.key);
++    auto body = ciphertext.slice(0, ciphertext.size() - Nt);
++    auto tag = ciphertext.slice(ciphertext.size() - Nt, Nt);
++    return aead.decrypt(body, schedule.base_nonce, aad, tag);
++}
++
++}
+diff --git a/Libraries/LibCrypto/HPKE.h b/Libraries/LibCrypto/HPKE.h
+new file mode 100644
+index 00000000..3025a58b
+--- /dev/null
++++ b/Libraries/LibCrypto/HPKE.h
+@@ -0,0 +1,38 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++/*
++ * RFC 9180 Hybrid Public Key Encryption, single-shot base mode, one suite:
++ * DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-128-GCM. Used by sealed form fields.
++ */
++
++#pragma once
++
++#include <AK/ByteBuffer.h>
++#include <AK/Error.h>
++#include <AK/Optional.h>
++#include <LibCrypto/BigInt/UnsignedBigInteger.h>
++
++namespace Crypto::HPKE {
++
++struct KeyPair {
++    UnsignedBigInteger private_key;
++    ByteBuffer public_key; // 65-byte uncompressed SEC1 point
++};
++
++struct Sealed {
++    ByteBuffer enc;        // 65-byte encapsulated ephemeral public key
++    ByteBuffer ciphertext; // AEAD ciphertext followed by the 16-byte tag
++};
++
++ErrorOr<KeyPair> derive_key_pair(ReadonlyBytes ikm);
++ErrorOr<KeyPair> generate_key_pair();
++
++// ephemeral_ikm exists for test vectors only; production callers must not pass it.
++ErrorOr<Sealed> seal(ReadonlyBytes recipient_public_key, ReadonlyBytes info, ReadonlyBytes aad, ReadonlyBytes plaintext, Optional<ReadonlyBytes> ephemeral_ikm = {});
++ErrorOr<ByteBuffer> open(UnsignedBigInteger const& recipient_private_key, ReadonlyBytes recipient_public_key, ReadonlyBytes enc, ReadonlyBytes info, ReadonlyBytes aad, ReadonlyBytes ciphertext);
++
++}
+diff --git a/Tests/LibCrypto/CMakeLists.txt b/Tests/LibCrypto/CMakeLists.txt
+index 486ce9cf..18e02021 100644
+--- a/Tests/LibCrypto/CMakeLists.txt
++++ b/Tests/LibCrypto/CMakeLists.txt
+@@ -10,6 +10,7 @@ set(TEST_SOURCES
+     TestHash.cpp
+     TestHKDF.cpp
+     TestHMAC.cpp
++    TestHPKE.cpp
+     TestMLDSA.cpp
+     TestOAEP.cpp
+     TestPBKDF2.cpp
+diff --git a/Tests/LibCrypto/TestHPKE.cpp b/Tests/LibCrypto/TestHPKE.cpp
+new file mode 100644
+index 00000000..51c339b8
+--- /dev/null
++++ b/Tests/LibCrypto/TestHPKE.cpp
+@@ -0,0 +1,67 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++/*
++ * RFC 9180 Appendix A.3.1: DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-128-GCM, Base mode.
++ */
++
++#include <AK/Hex.h>
++#include <LibCrypto/Curves/SECPxxxr1.h>
++#include <LibCrypto/HPKE.h>
++#include <LibTest/TestCase.h>
++
++static ByteBuffer hex(StringView text)
++{
++    return MUST(decode_hex(text));
++}
++
++static auto const info = hex("4f6465206f6e2061204772656369616e2055726e"sv);
++static auto const ikmE = hex("4270e54ffd08d79d5928020af4686d8f6b7d35dbe470265f1f5aa22816ce860e"sv);
++static auto const pkEm = hex("04a92719c6195d5085104f469a8b9814d5838ff72b60501e2c4466e5e67b325ac98536d7b61a1af4b78e5b7f951c0900be863c403ce65c9bfcb9382657222d18c4"sv);
++static auto const ikmR = hex("668b37171f1072f3cf12ea8a236a45df23fc13b82af3609ad1e354f6ef817550"sv);
++static auto const pkRm = hex("04fe8c19ce0905191ebc298a9245792531f26f0cece2460639e8bc39cb7f706a826a779b4cf969b8a0e539c7f62fb3d30ad6aa8f80e30f1d128aafd68a2ce72ea0"sv);
++static auto const skRm = hex("f3ce7fdae57e1a310d87f1ebbde6f328be0a99cdbcadf4d6589cf29de4b8ffd2"sv);
++static auto const pt = hex("4265617574792069732074727574682c20747275746820626561757479"sv);
++static auto const aad = hex("436f756e742d30"sv);
++static auto const ct = hex("5ad590bb8baa577f8619db35a36311226a896e7342a6d836d8b7bcd2f20b6c7f9076ac232e3ab2523f39513434"sv);
++
++TEST_CASE(derive_key_pair_matches_pkRm)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::derive_key_pair(ikmR));
++    EXPECT_EQ(kp.public_key.bytes(), pkRm.bytes());
++    auto private_key_bytes = TRY_OR_FAIL(Crypto::Curves::SECPxxxr1Point::scalar_to_bytes(kp.private_key, 32));
++    EXPECT_EQ(private_key_bytes.bytes(), skRm.bytes());
++}
++
++TEST_CASE(seal_reproduces_enc_and_ct_with_vector_ikmE)
++{
++    auto sealed = TRY_OR_FAIL(Crypto::HPKE::seal(pkRm, info, aad, pt, ikmE.bytes()));
++    EXPECT_EQ(sealed.enc.bytes(), pkEm.bytes());
++    EXPECT_EQ(sealed.ciphertext.bytes(), ct.bytes());
++}
++
++TEST_CASE(open_recovers_vector_plaintext)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::derive_key_pair(ikmR));
++    auto opened = TRY_OR_FAIL(Crypto::HPKE::open(kp.private_key, pkRm, pkEm, info, aad, ct));
++    EXPECT_EQ(opened.bytes(), pt.bytes());
++}
++
++TEST_CASE(open_rejects_wrong_aad)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::derive_key_pair(ikmR));
++    auto wrong_aad = hex("436f756e742d31"sv);
++    EXPECT(Crypto::HPKE::open(kp.private_key, pkRm, pkEm, info, wrong_aad, ct).is_error());
++}
++
++TEST_CASE(round_trip_with_fresh_keys)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::generate_key_pair());
++    auto sealed = TRY_OR_FAIL(Crypto::HPKE::seal(kp.public_key, "sealed-input/1"sv.bytes(), "slot"sv.bytes(), "hello"sv.bytes()));
++    EXPECT_EQ(sealed.enc.size(), 65u);
++    auto opened = TRY_OR_FAIL(Crypto::HPKE::open(kp.private_key, kp.public_key, sealed.enc, "sealed-input/1"sv.bytes(), "slot"sv.bytes(), sealed.ciphertext));
++    EXPECT_EQ(opened.bytes(), "hello"sv.bytes());
++}
+-- 
+2.55.0
+

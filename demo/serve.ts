@@ -108,6 +108,21 @@ export async function startServers(options: { pagePort: number; recipientPort: n
       if (url.pathname === '/insecure') {
         return send(response, 200, await renderPage('http://api.example.invalid', ''), { 'Content-Type': 'text/html; charset=utf-8' });
       }
+      if (url.pathname === '/native') {
+        const html = (await readFile(join(here, 'native.html'), 'utf8'))
+          .replaceAll('__RECIPIENT__', recipientOrigin)
+          .replaceAll('__FIELD__', '<sealedinput name="ssn" required inputmode="numeric" pattern="\\d{3}-?\\d{2}-?\\d{4}"></sealedinput>')
+          .replaceAll('__NAME__', 'ssn');
+        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': pageCsp(recipientOrigin) });
+      }
+      if (url.pathname === '/native-directive') {
+        const html = (await readFile(join(here, 'native.html'), 'utf8'))
+          .replaceAll('__RECIPIENT__', recipientOrigin)
+          .replaceAll('__FIELD__', '<input name="card" autocomplete="cc-number" inputmode="numeric">')
+          .replaceAll('__NAME__', 'card');
+        return send(response, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `${pageCsp(recipientOrigin)}; sealed-fields cc-number` });
+      }
+      if (url.pathname === '/native.js') return send(response, 200, await readFile(join(here, 'native.js')), { 'Content-Type': 'text/javascript' });
       send(response, 404, 'not found', { 'Content-Type': 'text/plain' });
     } catch (error) {
       log({ event: 'demo.request.error', route: url.pathname, message: error instanceof Error ? error.message : String(error) });

@@ -1,0 +1,391 @@
+From ab340ec810c4ecad7adf8f3406edfe3d862e4b8d Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 22:54:03 -0500
+Subject: [PATCH 9/9] LibWeb: Add <sealedinput> and the sealed-fields CSP
+ directive, with Text tests
+
+---
+ Libraries/LibWeb/CMakeLists.txt               |  1 +
+ Libraries/LibWeb/DOM/ElementFactory.cpp       |  4 ++
+ Libraries/LibWeb/Forward.h                    |  1 +
+ .../LibWeb/HTML/HTMLSealedInputElement.cpp    | 29 ++++++++++
+ .../LibWeb/HTML/HTMLSealedInputElement.h      | 29 ++++++++++
+ .../LibWeb/HTML/HTMLSealedInputElement.idl    |  6 ++
+ Libraries/LibWeb/HTML/TagNames.h              |  1 +
+ Libraries/LibWeb/idl_files.cmake              |  1 +
+ .../expected/HTML/sealed-fields-directive.txt |  8 +++
+ .../expected/HTML/sealedinput-envelope.txt    | 16 ++++++
+ .../Text/expected/all-window-properties.txt   |  1 +
+ .../input/HTML/sealed-fields-directive.html   | 39 +++++++++++++
+ .../HTML/sealed-fields-directive.html.headers |  1 +
+ .../Text/input/HTML/sealedinput-envelope.html | 57 +++++++++++++++++++
+ .../HTML/sealedinput-envelope.html.headers    |  1 +
+ .../input/wpt-import/.well-known/sealed-input |  8 +++
+ .../.well-known/sealed-input.headers          |  2 +
+ 17 files changed, 205 insertions(+)
+ create mode 100644 Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+ create mode 100644 Libraries/LibWeb/HTML/HTMLSealedInputElement.h
+ create mode 100644 Libraries/LibWeb/HTML/HTMLSealedInputElement.idl
+ create mode 100644 Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
+ create mode 100644 Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+ create mode 100644 Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
+ create mode 100644 Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
+ create mode 100644 Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+ create mode 100644 Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html.headers
+ create mode 100644 Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input
+ create mode 100644 Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input.headers
+
+diff --git a/Libraries/LibWeb/CMakeLists.txt b/Libraries/LibWeb/CMakeLists.txt
+index f1ab11c2..e0bb52cf 100644
+--- a/Libraries/LibWeb/CMakeLists.txt
++++ b/Libraries/LibWeb/CMakeLists.txt
+@@ -593,6 +593,7 @@ set(SOURCES
+     HTML/HTMLProgressElement.cpp
+     HTML/HTMLQuoteElement.cpp
+     HTML/HTMLScriptElement.cpp
++    HTML/HTMLSealedInputElement.cpp
+     HTML/HTMLSelectedContentElement.cpp
+     HTML/HTMLSelectElement.cpp
+     HTML/HTMLSlotElement.cpp
+diff --git a/Libraries/LibWeb/DOM/ElementFactory.cpp b/Libraries/LibWeb/DOM/ElementFactory.cpp
+index f930c230..e09ecf99 100644
+--- a/Libraries/LibWeb/DOM/ElementFactory.cpp
++++ b/Libraries/LibWeb/DOM/ElementFactory.cpp
+@@ -65,6 +65,7 @@
+ #include <LibWeb/HTML/HTMLProgressElement.h>
+ #include <LibWeb/HTML/HTMLQuoteElement.h>
+ #include <LibWeb/HTML/HTMLScriptElement.h>
++#include <LibWeb/HTML/HTMLSealedInputElement.h>
+ #include <LibWeb/HTML/HTMLSelectElement.h>
+ #include <LibWeb/HTML/HTMLSelectedContentElement.h>
+ #include <LibWeb/HTML/HTMLSlotElement.h>
+@@ -259,6 +260,8 @@ ErrorOr<FixedArray<Utf16FlyString>> valid_local_names_for_given_html_element_int
+         return FixedArray<Utf16FlyString>::create({ HTML::TagNames::blockquote, HTML::TagNames::q });
+     if (html_element_interface_name == Utf16View { "HTMLScriptElement"sv })
+         return FixedArray<Utf16FlyString>::create({ HTML::TagNames::script });
++    if (html_element_interface_name == Utf16View { "HTMLSealedInputElement"sv })
++        return FixedArray<Utf16FlyString>::create({ HTML::TagNames::sealedinput });
+     if (html_element_interface_name == Utf16View { "HTMLSelectedContentElement"sv })
+         return FixedArray<Utf16FlyString>::create({ HTML::TagNames::selectedcontent });
+     if (html_element_interface_name == Utf16View { "HTMLSelectElement"sv })
+@@ -407,6 +410,7 @@ static HashMap<FlatPtr, HTMLElementFactory> const& html_element_factories()
+         REGISTER_HTML_ELEMENT(blockquote, HTMLQuoteElement);
+         REGISTER_HTML_ELEMENT(q, HTMLQuoteElement);
+         REGISTER_HTML_ELEMENT(script, HTMLScriptElement);
++        REGISTER_HTML_ELEMENT(sealedinput, HTMLSealedInputElement);
+         REGISTER_HTML_ELEMENT(selectedcontent, HTMLSelectedContentElement);
+         REGISTER_HTML_ELEMENT(select, HTMLSelectElement);
+         REGISTER_HTML_ELEMENT(slot, HTMLSlotElement);
+diff --git a/Libraries/LibWeb/Forward.h b/Libraries/LibWeb/Forward.h
+index ee0efff5..dd412227 100644
+--- a/Libraries/LibWeb/Forward.h
++++ b/Libraries/LibWeb/Forward.h
+@@ -805,6 +805,7 @@ class HTMLPreElement;
+ class HTMLProgressElement;
+ class HTMLQuoteElement;
+ class HTMLScriptElement;
++class HTMLSealedInputElement;
+ class HTMLSelectedContentElement;
+ class HTMLSelectElement;
+ class HTMLSlotElement;
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+new file mode 100644
+index 00000000..14e4fe82
+--- /dev/null
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <LibWeb/HTML/HTMLSealedInputElement.h>
++#include <LibWeb/HTML/SealedField.h>
++
++namespace Web::HTML {
++
++GC_DEFINE_ALLOCATOR(HTMLSealedInputElement);
++
++HTMLSealedInputElement::HTMLSealedInputElement(DOM::Document& document, DOM::QualifiedName qualified_name)
++    : HTMLInputElement(document, move(qualified_name))
++{
++}
++
++HTMLSealedInputElement::~HTMLSealedInputElement() = default;
++
++void HTMLSealedInputElement::form_associated_element_was_inserted()
++{
++    if (!sealed_field())
++        attach_sealed_field();
++    // The base hook starts the SealedField when it is present and not yet ready.
++    HTMLInputElement::form_associated_element_was_inserted();
++}
++
++}
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
+new file mode 100644
+index 00000000..1b49fb7b
+--- /dev/null
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
+@@ -0,0 +1,29 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++/*
++ * <sealedinput>: an input whose value is always sealed. Non-void; authors write </sealedinput>.
++ */
++
++#pragma once
++
++#include <LibWeb/HTML/HTMLInputElement.h>
++
++namespace Web::HTML {
++
++class HTMLSealedInputElement final : public HTMLInputElement {
++    WEB_WRAPPABLE(HTMLSealedInputElement, HTMLInputElement);
++    GC_DECLARE_ALLOCATOR(HTMLSealedInputElement);
++
++public:
++    virtual ~HTMLSealedInputElement() override;
++
++private:
++    HTMLSealedInputElement(DOM::Document&, DOM::QualifiedName);
++    virtual void form_associated_element_was_inserted() override;
++};
++
++}
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.idl b/Libraries/LibWeb/HTML/HTMLSealedInputElement.idl
+new file mode 100644
+index 00000000..b0fce79e
+--- /dev/null
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.idl
+@@ -0,0 +1,6 @@
++// A sealed form field: value is HPKE-sealed to the form action's published key; script sees only the envelope.
++// Proposal: koschei docs/specs/explainer.md
++[Exposed=Window]
++interface HTMLSealedInputElement : HTMLInputElement {
++    [HTMLConstructor] constructor();
++};
+diff --git a/Libraries/LibWeb/HTML/TagNames.h b/Libraries/LibWeb/HTML/TagNames.h
+index dc3203ca..d68eea7c 100644
+--- a/Libraries/LibWeb/HTML/TagNames.h
++++ b/Libraries/LibWeb/HTML/TagNames.h
+@@ -123,6 +123,7 @@ namespace Web::HTML::TagNames {
+     __ENUMERATE_HTML_TAG(s, "s")                             \
+     __ENUMERATE_HTML_TAG(samp, "samp")                       \
+     __ENUMERATE_HTML_TAG(script, "script")                   \
++    __ENUMERATE_HTML_TAG(sealedinput, "sealedinput")         \
+     __ENUMERATE_HTML_TAG(search, "search")                   \
+     __ENUMERATE_HTML_TAG(section, "section")                 \
+     __ENUMERATE_HTML_TAG(selectedcontent, "selectedcontent") \
+diff --git a/Libraries/LibWeb/idl_files.cmake b/Libraries/LibWeb/idl_files.cmake
+index d4d36275..29091585 100644
+--- a/Libraries/LibWeb/idl_files.cmake
++++ b/Libraries/LibWeb/idl_files.cmake
+@@ -297,6 +297,7 @@ libweb_js_bindings(HTML/HTMLPreElement)
+ libweb_js_bindings(HTML/HTMLProgressElement)
+ libweb_js_bindings(HTML/HTMLQuoteElement)
+ libweb_js_bindings(HTML/HTMLScriptElement)
++libweb_js_bindings(HTML/HTMLSealedInputElement)
+ libweb_js_bindings(HTML/HTMLSelectedContentElement)
+ libweb_js_bindings(HTML/HTMLSelectElement)
+ libweb_js_bindings(HTML/HTMLSlotElement)
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt b/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
+new file mode 100644
+index 00000000..f20612ad
+--- /dev/null
++++ b/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
+@@ -0,0 +1,8 @@
++card-constructor=HTMLInputElement
++sealed-ready fired on the policy-sealed input
++card-value-prefix=true
++card-leaks=false
++memo-plain=gift
++formdata-card-equals-value=true
++card-setter-threw=InvalidStateError
++memo-setter-works=ok
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+new file mode 100644
+index 00000000..5af49e27
+--- /dev/null
++++ b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+@@ -0,0 +1,16 @@
++constructor=HTMLSealedInputElement
++is-form-control=true
++sealed-ready fired
++value-prefix=true
++value-parts=4
++value-leaks-digits=false
++formdata-equals-value=true
++plain-still-plain=typed-plaintext
++keydowns-seen-by-script=0
++input-data=null
++selectionStart=0 selectionEnd=0
++valid=true patternMismatch=false customError=false
++valid-after-pattern-change-and-retype=true
++value-changed-after-retype=true
++setter-threw=InvalidStateError
++value-after-reset="" valid-after-reset=false
+diff --git a/Tests/LibWeb/Text/expected/all-window-properties.txt b/Tests/LibWeb/Text/expected/all-window-properties.txt
+index 0a87a43f..e40f9cc9 100644
+--- a/Tests/LibWeb/Text/expected/all-window-properties.txt
++++ b/Tests/LibWeb/Text/expected/all-window-properties.txt
+@@ -247,6 +247,7 @@ HTMLPreElement
+ HTMLProgressElement
+ HTMLQuoteElement
+ HTMLScriptElement
++HTMLSealedInputElement
+ HTMLSelectElement
+ HTMLSelectedContentElement
+ HTMLSlotElement
+diff --git a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
+new file mode 100644
+index 00000000..1e1dc41d
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
+@@ -0,0 +1,39 @@
++<!DOCTYPE html>
++<form action="/submit" method="post">
++    <input name="card" autocomplete="cc-number">
++    <input name="memo" autocomplete="off">
++</form>
++<script>
++    // Same as sealedinput-envelope.html: listen synchronously, before the blocking include.js fetch lets discovery run.
++    const sealedReady = new Promise(resolve => document.forms[0].elements.namedItem("card").addEventListener("sealed-ready", resolve, { once: true }));
++</script>
++<script src="../include.js"></script>
++<script>
++    promiseTest(async () => {
++        const form = document.forms[0];
++        const card = form.elements.namedItem("card");
++        const memo = form.elements.namedItem("memo");
++        println(`card-constructor=${card.constructor.name}`);
++
++        await sealedReady;
++        println("sealed-ready fired on the policy-sealed input");
++
++        card.focus();
++        internals.sendText(card, "4111111111111111");
++        memo.focus();
++        internals.sendText(memo, "gift");
++
++        println(`card-value-prefix=${card.value.startsWith("sealed1.rfc-a3-1.")}`);
++        println(`card-leaks=${card.value.includes("4111")}`);
++        println(`memo-plain=${memo.value}`);
++        println(`formdata-card-equals-value=${new FormData(form).get("card") === card.value}`);
++        try {
++            card.value = "x";
++            println("card-setter-threw=false");
++        } catch (e) {
++            println(`card-setter-threw=${e.name}`);
++        }
++        memo.value = "ok";
++        println(`memo-setter-works=${memo.value}`);
++    });
++</script>
+diff --git a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
+new file mode 100644
+index 00000000..6061b058
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
+@@ -0,0 +1 @@
++Content-Security-Policy: sealed-fields cc-number
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+new file mode 100644
+index 00000000..bb99f836
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+@@ -0,0 +1,57 @@
++<!DOCTYPE html>
++<form action="/submit" method="post">
++    <input name="plain" value="typed-plaintext">
++    <sealedinput name="ssn" required pattern="\d{3}-?\d{2}-?\d{4}"></sealedinput>
++</form>
++<script>
++    // Discovery starts from a task queued at insertion and sealed-ready is the only readiness signal, so the listener
++    // must be attached synchronously here, before the blocking include.js fetch lets that task and the key fetch run.
++    const sealedReady = new Promise(resolve => document.querySelector("sealedinput").addEventListener("sealed-ready", resolve, { once: true }));
++</script>
++<script src="../include.js"></script>
++<script>
++    promiseTest(async () => {
++        const form = document.forms[0];
++        const el = form.querySelector("sealedinput");
++        println(`constructor=${el.constructor.name}`);
++        println(`is-form-control=${form.elements.namedItem("ssn") === el}`);
++
++        await sealedReady;
++        println("sealed-ready fired");
++
++        let keydowns = 0;
++        el.addEventListener("keydown", () => keydowns++);
++        let inputData = "unset";
++        el.addEventListener("input", e => { inputData = e.data; });
++
++        el.focus();
++        internals.sendText(el, "123-45-6789");
++
++        const envelope = el.value;
++        println(`value-prefix=${envelope.startsWith("sealed1.rfc-a3-1.")}`);
++        println(`value-parts=${envelope.split(".").length}`);
++        println(`value-leaks-digits=${envelope.includes("6789")}`);
++        println(`formdata-equals-value=${new FormData(form).get("ssn") === envelope}`);
++        println(`plain-still-plain=${new FormData(form).get("plain")}`);
++        println(`keydowns-seen-by-script=${keydowns}`);
++        println(`input-data=${inputData}`);
++        println(`selectionStart=${el.selectionStart} selectionEnd=${el.selectionEnd}`);
++        println(`valid=${el.checkValidity()} patternMismatch=${el.validity.patternMismatch} customError=${el.validity.customError}`);
++
++        el.setAttribute("pattern", "^9.*");
++        internals.sendKey(el, "Backspace");
++        internals.sendText(el, "9");
++        println(`valid-after-pattern-change-and-retype=${el.checkValidity()}`);
++        println(`value-changed-after-retype=${el.value !== envelope}`);
++
++        try {
++            el.value = "x";
++            println("setter-threw=false");
++        } catch (e) {
++            println(`setter-threw=${e.name}`);
++        }
++
++        form.reset();
++        println(`value-after-reset=${JSON.stringify(el.value)} valid-after-reset=${el.checkValidity()}`);
++    });
++</script>
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html.headers b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html.headers
+new file mode 100644
+index 00000000..ac4cd591
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html.headers
+@@ -0,0 +1 @@
++X-Koschei-Test: serve-over-http
+diff --git a/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input b/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input
+new file mode 100644
+index 00000000..612ca617
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input
+@@ -0,0 +1,8 @@
++{
++  "frame": "/unused-natively",
++  "keys": [
++    { "kid": "rfc-a3-1", "kty": "EC", "crv": "P-256", "use": "enc",
++      "x": "_owZzgkFGR68KYqSRXklMfJvDOziRgY56Lw5y39waoI",
++      "y": "anebTPlpuKDlOcf2L7PTCtaqj4DjDx0Siq_WiiznLqA" }
++  ]
++}
+diff --git a/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input.headers b/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input.headers
+new file mode 100644
+index 00000000..75875a7c
+--- /dev/null
++++ b/Tests/LibWeb/Text/input/wpt-import/.well-known/sealed-input.headers
+@@ -0,0 +1,2 @@
++Content-Type: application/json
++Access-Control-Allow-Origin: *
+-- 
+2.55.0
+

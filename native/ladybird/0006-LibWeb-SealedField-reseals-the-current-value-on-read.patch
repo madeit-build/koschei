@@ -1,0 +1,31 @@
+From a654ed2ab770b62e1de1e48392bb95e460a6dd9b Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 22:10:55 -0500
+Subject: [PATCH 6/9] LibWeb: SealedField reseals the current value on ready
+
+---
+ Libraries/LibWeb/HTML/SealedField.cpp | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index ff85326d..33d39c3f 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -271,8 +271,12 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
+     m_recipient_public_key = move(recipient_public_key);
+     m_ready = true;
+     m_failed = false;
+-    // Validity reflects the current value at once: an untouched required field is invalid, not blank-and-valid.
+-    update_validity(m_element->relevant_value());
++    // Seal whatever is already in the box (a page-supplied value attribute, say) so the envelope never disagrees with
++    // the visible text, and so an untouched required field is invalid rather than blank-and-valid.
++    reseal(m_element->relevant_value());
++    // A first seal against an unusable curve point fails the field; sealed-error has already been dispatched.
++    if (m_failed)
++        return;
+     DOM::EventInit init {};
+     init.bubbles = true;
+     m_element->dispatch_event(DOM::Event::create("sealed-ready"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
+-- 
+2.55.0
+

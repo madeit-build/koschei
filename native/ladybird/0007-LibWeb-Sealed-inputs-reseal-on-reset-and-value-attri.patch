@@ -1,0 +1,139 @@
+From 1b436ec2a7e4a458e669e56df67dc0fb81bbd4f6 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 22:18:51 -0500
+Subject: [PATCH 7/9] LibWeb: Sealed inputs reseal on reset and value attribute
+ changes; detach on form owner change
+
+---
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp | 43 +++++++++++++++++-----
+ Libraries/LibWeb/HTML/HTMLInputElement.h   |  2 +
+ Libraries/LibWeb/HTML/SealedField.cpp      |  6 +--
+ 3 files changed, 38 insertions(+), 13 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index e16012c4..1fc800ed 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -1696,6 +1696,10 @@ void HTMLInputElement::form_associated_element_attribute_changed(Utf16FlyString
+             else
+                 m_value = {};
+ 
++            // The envelope must never disagree with the visible text.
++            if (m_sealed_field)
++                m_sealed_field->reseal(m_value);
++
+             if (m_value != old_value)
+                 relevant_value_was_changed();
+ 
+@@ -2284,16 +2288,8 @@ void HTMLInputElement::form_associated_element_was_inserted()
+     if (!m_sealed_field)
+         m_sealed_field = SealedField::create_if_policy_applies(HTML::relevant_realm(*this), *this);
+ 
+-    // Discovery is queued so that a parser-created element can attach sealed-error listeners before a synchronous
+-    // failure (an insecure action, say) fires. A field that is already ready keeps its key across a reinsertion.
+-    if (m_sealed_field) {
+-        queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
+-            if (!is_connected())
+-                return;
+-            if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed())
+-                m_sealed_field->start();
+-        });
+-    }
++    // Removal detaches the field (key, slot and envelope are dropped), so reinsertion re-runs discovery here.
++    queue_sealed_field_start();
+ }
+ 
+ void HTMLInputElement::attach_sealed_field()
+@@ -2301,6 +2297,23 @@ void HTMLInputElement::attach_sealed_field()
+     m_sealed_field = SealedField::create(HTML::relevant_realm(*this), *this);
+ }
+ 
++// Discovery is queued so that a parser-created element can attach sealed-error listeners before a synchronous
++// failure (an insecure action, say) fires. Insertion and a form owner change can both ask for it in one turn; a
++// single task serves both.
++void HTMLInputElement::queue_sealed_field_start()
++{
++    if (!m_sealed_field || m_sealed_field_start_queued)
++        return;
++    m_sealed_field_start_queued = true;
++    queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
++        m_sealed_field_start_queued = false;
++        if (!is_connected())
++            return;
++        if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed())
++            m_sealed_field->start();
++    });
++}
++
+ void HTMLInputElement::form_associated_element_was_removed(DOM::Node* old_parent)
+ {
+     FormAssociatedElement::form_associated_element_was_removed(old_parent);
+@@ -2313,11 +2326,21 @@ void HTMLInputElement::form_associated_element_was_moved(GC::Ptr<DOM::Node> old_
+ {
+     FormAssociatedElement::form_associated_element_was_moved(old_parent);
+     update_radio_button_group_registration();
++    // The slot AAD is bound to the owning form's action; a move may change the owner without a removal.
++    if (m_sealed_field) {
++        m_sealed_field->detach();
++        queue_sealed_field_start();
++    }
+ }
+ 
+ void HTMLInputElement::form_associated_element_form_owner_changed()
+ {
+     update_radio_button_group_registration();
++    // Same as a move: a form= attribute change re-binds the slot to another action.
++    if (m_sealed_field) {
++        m_sealed_field->detach();
++        queue_sealed_field_start();
++    }
+ }
+ 
+ EventResult HTMLInputElement::handle_return_key(Utf16FlyString const&)
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index 4f8157d7..6c0ee931 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -296,6 +296,7 @@ protected:
+     void attach_sealed_field();
+ 
+ private:
++    void queue_sealed_field_start();
+     void type_attribute_changed(TypeAttributeState old_state, TypeAttributeState new_state);
+     RadioButtonGroupRegistry* radio_button_group_registry();
+     void update_radio_button_group_registration();
+@@ -440,6 +441,7 @@ private:
+     TypeAttributeState m_type { TypeAttributeState::Text };
+     Utf16String m_value;
+     GC::Ptr<SealedField> m_sealed_field;
++    bool m_sealed_field_start_queued { false };
+ 
+     Utf16String m_last_src_value;
+ 
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 33d39c3f..9c780736 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -396,8 +396,8 @@ void SealedField::reseal(Utf16View plaintext)
+     m_envelope = Utf16String::formatted("{}.{}.{}.{}", envelope_version, m_kid, enc, ciphertext);
+ }
+ 
+-// Form reset: the value is empty again, so validity is re-derived from the live attributes (a required field is
+-// invalid again). The fail-closed message stays while the field is not ready.
++// Form reset: the value is the value attribute again (usually empty), so constraints thaw and the current text is
++// resealed against the live attributes. The fail-closed message stays while the field is not ready.
+ void SealedField::reset()
+ {
+     m_envelope = {};
+@@ -405,7 +405,7 @@ void SealedField::reset()
+     m_constraints = {};
+     if (!m_ready)
+         return set_element_custom_validity(unavailable_message);
+-    update_validity({});
++    reseal(m_element->relevant_value());
+ }
+ 
+ // Removal from the document: forget the recipient entirely. The slot AAD is derived from the owning form's action,
+-- 
+2.55.0
+
