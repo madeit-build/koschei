@@ -203,3 +203,31 @@ patch, the same page should print `constructor=HTMLSealedInputElement`,
 `is-form-control=true`, `formdata-has-ssn=true`, and a `value` that starts with
 `sealed1.` and does not contain the typed text. That before/after pair is the
 demo's first screenshot.
+
+## Results
+
+Patch series `native/ladybird/0001..0009` against `1010a932`. `TestHPKE` reproduces RFC 9180
+A.3.1 `enc` and `ct` from the vector `ikmE` and opens the vector ciphertext. Two Ladybird Text
+tests pass under `test-web`: `sealedinput-envelope` (element path) and
+`sealed-fields-directive` (header-delivered CSP, served by the echo server). The koschei demo
+recipient opened envelopes produced by Ladybird for both `/native` and `/native-directive`:
+
+    {"time":"2026-09-19T04:16:13.326Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
+    {"time":"2026-09-19T04:16:18.501Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
+
+Screenshots: `assets/ladybird-native.png`, `assets/ladybird-native-directive.png`. Compare with
+`assets/ladybird-sealedinput-unknown.png` (before).
+
+Deviations from the explainer that a native implementer should know:
+
+- The field is not `disabled` while waiting for the key; it ignores insertions instead.
+- `checkValidity()` is false via a `This field is unavailable.` custom error until ready, and
+  again after failure.
+- `<sealedinput>` is non-void.
+- `InputEvent.inputType` is `insertText` natively (the explainer says empty string).
+- `selectionStart`/`selectionEnd` read `0` rather than being absent.
+- There is no readiness property, so pages must register `sealed-ready` listeners before the
+  field can fire (the demo page loads its script in `<head>`).
+- Renderer memory still holds the plaintext (see [Beyond v1](#beyond-v1-trusted-path-input)).
+- LibCrypto key material is not zeroized and `derive_key_pair` is not constant-time
+  (test-vector path only).

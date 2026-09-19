@@ -31,11 +31,10 @@ opened by the same `unseal`. Companion to
 5. **Proof artifact.** The recipient's structured log line
    `sealed-input.unseal outcome=ok` for an envelope Ladybird produced, plus a
    screenshot. The log is the assertion; the screenshot is the exhibit.
-6. **Tests at two speeds.** A Ladybird Text test (file-served, `<meta>` CSP
-   not needed) covers the element path with `internals.sendText` and runs in
-   seconds under `test-web`. The directive path is covered only by the HTTP
-   run against the demo server, because header-delivered CSP is the
-   production path and `<meta>` parses differently.
+6. **Tests at two speeds.** Both paths are covered by Ladybird Text tests: the
+   runner serves any test with a `.headers` sidecar over HTTP from its echo
+   server, so the directive test carries a real `Content-Security-Policy`
+   header. The HTTP run against the demo remains the cross-client proof.
 7. **HPKE in LibCrypto, one suite.** `LibCrypto/HPKE.{h,cpp}` implements
    RFC 9180 single-shot base mode for `DHKEM(P-256, HKDF-SHA256),
    HKDF-SHA256, AES-128-GCM` on top of the existing `SECP256r1`, `HKDF`, and
@@ -65,6 +64,16 @@ Each row of the explainer's Element surface becomes exactly one guard.
 | Fail closed until ready | `SealedField` | disabled until the well-known fetch completes and the key imports |
 | `sealed-ready` / `sealed-error` | `SealedField` | dispatched on the owning element |
 | Entry list carries the envelope | none | the generic branch already reads `value()` |
+
+Added during implementation, beyond the explainer's original Element surface table:
+
+| Explainer row | File | Guard |
+|---|---|---|
+| `textInput` not dispatched | `Page/EventHandler.cpp` legacy `textInput` dispatch | `if (sealed_input_for(*focused_area)) return EventResult::Accepted;` |
+| Composition events not dispatched | `HTML/LocalNavigable.cpp` | `focused_area_is_sealed_input(document)` guards composition dispatch |
+| `getSelection().toString()` returns empty for a sealed field | `HTMLInputElement.cpp` `selected_text_for_stringifier()` | `if (m_sealed_field) return {};` |
+| Paste ignored until ready | `Page/EventHandler.cpp` `insert_pasted_content()` | `if (sealed_input_is_not_ready(*target)) return EventResult::Handled;` |
+| `selectionDirection` bindings guarded | `FormAssociatedElement.cpp` `set_selection_direction_binding()` | `if (is_sealed_text_control()) return {};` |
 
 ## Envelope compatibility
 
