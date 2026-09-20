@@ -1,7 +1,7 @@
 From 7f243400f0842843b0b590571792404f17b73e36 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Sat, 19 Sep 2026 19:03:52 -0500
-Subject: [PATCH 11/11] LibWeb: <sealedinput> ignores the type attribute from
+Subject: [PATCH 11/12] LibWeb: <sealedinput> ignores the type attribute from
  markup too
 
 ---

@@ -1,7 +1,7 @@
 From ab9dcc7de40b9517626a0b46c924d1dddbc89fd5 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 21:13:09 -0500
-Subject: [PATCH 02/11] LibWeb: Add SealedField, the shared core for sealed
+Subject: [PATCH 02/12] LibWeb: Add SealedField, the shared core for sealed
  form fields
 
 ---

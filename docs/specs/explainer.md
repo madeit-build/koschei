@@ -200,6 +200,7 @@ using `ElementInternals` for form value and validity.
 | `selectionStart`, `selectionEnd`, `setSelectionRange()`, `select()` | Not present. |
 | `getSelection().toString()` | Returns `""` for a focused sealed field. |
 | `selectionDirection` | Reads `"none"`; the setter is a no-op. |
+| `document.execCommand()` | Edits ignored (returns `false`): `insertText`, `delete`, `forwardDelete`, `insertParagraph`, `insertLineBreak`, and `undo`/`redo` while the next history step belongs to a sealed field. The user's own keyboard undo still works. |
 | `focus()`, `blur()`, `focus`/`blur` events | Work. `delegatesFocus` stops at the iframe, so the element forwards `focus()` to the frame's input over the protocol. |
 | `sealed-ready` (event) | Recipient frame loaded and key verified. Field enabled. |
 | `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. `frame-blocked` is raised when no `sealed-input:ready` arrives within the ready timeout after the frame loads (default 10 s), since browsers fire `load` rather than `error` on a frame blocked by CSP or `X-Frame-Options`. |

@@ -215,8 +215,8 @@ tests pass under `test-web`: `sealedinput-envelope` (element path) and
 through `new FormData(form)`, so both submission shapes are covered. The koschei demo
 recipient opened envelopes produced by Ladybird for both `/native` and `/native-directive`:
 
-    {"time":"2026-09-20T00:09:00.875Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
-    {"time":"2026-09-20T00:09:06.155Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
+    {"time":"2026-09-20T00:41:57.712Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
+    {"time":"2026-09-20T00:42:02.972Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
 
 Screenshots: `assets/ladybird-native.png`, `assets/ladybird-native-directive.png`. Compare with
 `assets/ladybird-sealedinput-unknown.png` (before).
@@ -229,7 +229,16 @@ value-attr-after-type-change=null`, `paste-events=0 value-changed-after-paste=tr
 `value-after-reinsert="" valid-after-reinsert=false`, `markup-type-ignored=text` (in
 `sealedinput-envelope.txt`, covering C1–C4 plus the markup-`type` follow-up), and
 `late-value-prefix=true`, `pw-value-prefix=true` (in `sealed-fields-directive.txt`, covering
-I2's re-evaluation-on-insertion and the `webauthn` credential-type field-name rule).
+I2's re-evaluation on a post-insertion `autocomplete` change and the `webauthn`
+credential-type field-name rule).
+
+Hardening round A closed the last script-write channel and two slot-staleness cases. Evidence
+in `sealedinput-envelope.txt`: `execCommand-insert=false execCommand-delete=false
+execCommand-undo=false queryCommandEnabled-undo=false value-changed-by-execCommand=false`,
+`keyboard-undo-changed-value=true` (the user's own shortcut still works),
+`value-after-rename="" name-after-rename=ssn2`, `ready-after-form-action-change=true`.
+`TestHPKE` gains four negative cases (off-curve recipient key, 64-byte `enc`, 15-byte
+ciphertext, empty-plaintext round trip).
 
 Deviations from the explainer that a native implementer should know:
 
@@ -255,3 +264,10 @@ Deviations from the explainer that a native implementer should know:
   or discovery fails with `recipient-invalid`.
 - `form-action` is enforced at discovery, not only at form submission: a blocked action fails
   with `insecure-action` before the well-known fetch.
+- A `form=` change or `moveBefore` that changes the owner, a `name` change, or an owning
+  form `action` change clears the typed value and re-runs discovery (the slot AAD is bound to
+  all three).
+- An off-curve JWK in the key set is skipped and the next key tried.
+- `document.execCommand()` edits are ignored and return `false`, including `undo` and `redo`
+  while the next history step belongs to a sealed field; the keyboard shortcuts still work.
+- IME composition text is dropped before ready, like keyboard and paste input.

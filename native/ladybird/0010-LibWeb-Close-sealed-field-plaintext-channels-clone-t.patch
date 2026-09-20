@@ -1,7 +1,7 @@
 From a0ca629a5ab947b95514497e689e31ee96dacdc8 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Sat, 19 Sep 2026 19:01:04 -0500
-Subject: [PATCH 10/11] LibWeb: Close sealed-field plaintext channels (clone,
+Subject: [PATCH 10/12] LibWeb: Close sealed-field plaintext channels (clone,
  type change, paste, detach); apply form-action at discovery; re-evaluate the
  directive on autocomplete change
 

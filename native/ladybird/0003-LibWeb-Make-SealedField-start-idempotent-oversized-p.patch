@@ -1,7 +1,7 @@
 From 14382582abdb99a38c00aae24129e51bc14f3168 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 21:24:53 -0500
-Subject: [PATCH 03/11] LibWeb: Make SealedField::start idempotent; oversized
+Subject: [PATCH 03/12] LibWeb: Make SealedField::start idempotent; oversized
  plaintext is a constraint, not a recipient failure
 
 ---

@@ -1,7 +1,7 @@
 From ecc2961d51db27647810e50a87bc3aeac039f5f0 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 22:30:01 -0500
-Subject: [PATCH 08/11] LibWeb: Gate the sealed-field restart on field state;
+Subject: [PATCH 08/12] LibWeb: Gate the sealed-field restart on field state;
  seal m_value, not the text node
 
 ---
