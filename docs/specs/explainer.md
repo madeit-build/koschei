@@ -195,8 +195,11 @@ using `ElementInternals` for form value and validity.
 | `value` setter | Throws `InvalidStateError`. |
 | `validity`, `validationMessage`, `checkValidity()`, `reportValidity()` | Work. `validity` exposes a single `customError` flag, not which constraint failed. `validationMessage` is generic and never echoes input. |
 | `input`, `change` | Dispatched. `InputEvent.data` is `null` and `inputType` is the empty string. |
-| `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `paste` | Not dispatched to the page. |
+| `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `textInput` | Not dispatched to the page. |
+| `paste` | Not dispatched to the page; the UA's own paste still lands in the field once it is ready. |
 | `selectionStart`, `selectionEnd`, `setSelectionRange()`, `select()` | Not present. |
+| `getSelection().toString()` | Returns `""` for a focused sealed field. |
+| `selectionDirection` | Reads `"none"`; the setter is a no-op. |
 | `focus()`, `blur()`, `focus`/`blur` events | Work. `delegatesFocus` stops at the iframe, so the element forwards `focus()` to the frame's input over the protocol. |
 | `sealed-ready` (event) | Recipient frame loaded and key verified. Field enabled. |
 | `sealed-error` (event) | `detail.reason` ∈ `recipient-unreachable`, `recipient-invalid`, `frame-blocked`, `no-form-action`, `insecure-action`, `insecure-context`. Field stays disabled. `frame-blocked` is raised when no `sealed-input:ready` arrives within the ready timeout after the frame loads (default 10 s), since browsers fire `load` rather than `error` on a frame blocked by CSP or `X-Frame-Options`. |
@@ -514,6 +517,9 @@ The polyfill's cross-origin iframe is a stand-in. A native `<sealedinput>` would
   HPKE for ECH and Oblivious HTTP), removing the polyfill's dependency and the
   possibility of a substituted crypto library.
 - Enforce the `sealed-fields` CSP directive.
+- Apply the page's `form-action` policy to the resolved action at discovery,
+  before fetching the recipient's key, so retargeting the form cannot
+  redirect the seal.
 - Pad envelopes and coalesce `input` events if the platform decides length and
   cadence leakage matter.
 - Integrate with the platform's secure input mode so keystrokes into a sealed

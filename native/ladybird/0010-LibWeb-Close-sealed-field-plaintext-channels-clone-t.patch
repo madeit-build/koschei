@@ -1,0 +1,422 @@
+From a0ca629a5ab947b95514497e689e31ee96dacdc8 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Sat, 19 Sep 2026 19:01:04 -0500
+Subject: [PATCH 10/11] LibWeb: Close sealed-field plaintext channels (clone,
+ type change, paste, detach); apply form-action at discovery; re-evaluate the
+ directive on autocomplete change
+
+---
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp    | 28 ++++++-
+ Libraries/LibWeb/HTML/HTMLInputElement.h      |  1 +
+ Libraries/LibWeb/HTML/HTMLInputElement.idl    |  2 +-
+ Libraries/LibWeb/HTML/SealedField.cpp         | 82 ++++++++++++-------
+ Libraries/LibWeb/Page/EventHandler.cpp        | 16 +++-
+ .../expected/HTML/sealed-fields-directive.txt |  2 +
+ .../expected/HTML/sealedinput-envelope.txt    |  4 +
+ .../input/HTML/sealed-fields-directive.html   | 19 +++++
+ .../HTML/sealed-fields-directive.html.headers |  2 +-
+ .../Text/input/HTML/sealedinput-envelope.html | 19 +++++
+ 10 files changed, 141 insertions(+), 34 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index d9ba2ff9..bbb6b620 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -1674,6 +1674,9 @@ void HTMLInputElement::form_associated_element_attribute_changed(Utf16FlyString
+             m_dirty_checkedness = false;
+         }
+     } else if (name == HTML::AttributeNames::type) {
++        // A sealed field is a text control for life: a type change would copy the plaintext into the value attribute.
++        if (m_sealed_field)
++            return;
+         auto new_type_attribute_state = parse_type_attribute(value.has_value() ? value->utf16_view() : u""sv);
+         type_attribute_changed(m_type, new_type_attribute_state);
+ 
+@@ -1740,6 +1743,12 @@ void HTMLInputElement::form_associated_element_attribute_changed(Utf16FlyString
+     } else if (name == HTML::AttributeNames::required) {
+         if (m_radio_button_group_registry && old_value.has_value() != value.has_value())
+             m_radio_button_group_registry->required_state_changed(m_radio_button_group_name, *this);
++    } else if (name == HTML::AttributeNames::autocomplete) {
++        // The sealed-fields directive is re-evaluated whenever the field name can change; a field never un-seals.
++        if (!m_sealed_field && is_connected()) {
++            m_sealed_field = SealedField::create_if_policy_applies(HTML::relevant_realm(*this), *this);
++            queue_sealed_field_start();
++        }
+     }
+ 
+     // AD-HOC: A change to any of these attributes can change whether the element satisfies its constraints, and
+@@ -1770,7 +1779,7 @@ void HTMLInputElement::type_attribute_changed(TypeAttributeState old_state, Type
+     // 1. If the previous state of the element's type attribute put the value IDL attribute in the value mode, and the element's
+     //    value is not the empty string, and the new state of the element's type attribute puts the value IDL attribute in either
+     //    the default mode or the default/on mode, then set the element's value content attribute to the element's value.
+-    if (old_value_attribute_mode == ValueAttributeMode::Value && !m_value.is_empty() && (first_is_one_of(new_value_attribute_mode, ValueAttributeMode::Default, ValueAttributeMode::DefaultOn))) {
++    if (!m_sealed_field && old_value_attribute_mode == ValueAttributeMode::Value && !m_value.is_empty() && (first_is_one_of(new_value_attribute_mode, ValueAttributeMode::Default, ValueAttributeMode::DefaultOn))) {
+         set_attribute_value(HTML::AttributeNames::value, m_value);
+     }
+ 
+@@ -1961,6 +1970,16 @@ void HTMLInputElement::set_type(Utf16View type)
+     set_attribute_value(HTML::AttributeNames::type, type);
+ }
+ 
++// https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-cva-setcustomvalidity
++void HTMLInputElement::set_custom_validity_binding(Utf16String& error)
++{
++    // A sealed field's custom error is the one-bit validity SealedField maintains; script may neither clear it
++    // (masking a failed field) nor set it (a validity oracle fed from outside).
++    if (m_sealed_field)
++        return;
++    set_custom_validity(error);
++}
++
+ bool HTMLInputElement::can_have_text_editing_cursor() const
+ {
+     if (first_is_one_of(type_state(), TypeAttributeState::SubmitButton, TypeAttributeState::ResetButton, TypeAttributeState::Button))
+@@ -2432,8 +2451,11 @@ WebIDL::ExceptionOr<void> HTMLInputElement::cloned(DOM::Node& copy, bool subtree
+     // The cloning steps for input elements given node, copy, and subtree are to propagate the value, dirty value flag,
+     // checkedness, dirty checkedness flag, and indeterminateness from node to copy.
+     auto& input_clone = as<HTMLInputElement>(copy);
+-    input_clone.m_value = m_value;
+-    input_clone.m_dirty_value = m_dirty_value;
++    // A clone has no SealedField, so copying the plaintext into it would hand script a readable copy.
++    if (!m_sealed_field) {
++        input_clone.m_value = m_value;
++        input_clone.m_dirty_value = m_dirty_value;
++    }
+     input_clone.m_checked = m_checked;
+     input_clone.m_dirty_checkedness = m_dirty_checkedness;
+     input_clone.m_indeterminateness = m_indeterminateness;
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index 973d007a..518fe7f8 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -84,6 +84,7 @@ public:
+     Utf16FlyString type() const;
+     TypeAttributeState type_state() const { return m_type; }
+     void set_type(Utf16View);
++    void set_custom_validity_binding(Utf16String& error);
+ 
+     Utf16String default_value() const { return get_attribute_value(HTML::AttributeNames::value); }
+     void set_default_value(Utf16View value) { set_attribute_value(HTML::AttributeNames::value, value); }
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.idl b/Libraries/LibWeb/HTML/HTMLInputElement.idl
+index 81d7bbee..29f40b2e 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.idl
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.idl
+@@ -50,7 +50,7 @@ interface HTMLInputElement : HTMLElement {
+     readonly attribute DOMString validationMessage;
+     boolean checkValidity();
+     boolean reportValidity();
+-    undefined setCustomValidity(DOMString error);
++    [ImplementedAs=set_custom_validity_binding] undefined setCustomValidity(DOMString error);
+ 
+     readonly attribute NodeList? labels;
+ 
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 4d61c86c..a4d422b0 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -9,12 +9,14 @@
+ #include <AK/JsonObject.h>
+ #include <AK/JsonValue.h>
+ #include <AK/Utf16StringBuilder.h>
++#include <LibCrypto/Curves/SECPxxxr1.h>
+ #include <LibCrypto/HPKE.h>
+ #include <LibJS/Runtime/Object.h>
+ #include <LibJS/Runtime/PrimitiveString.h>
+ #include <LibJS/Runtime/Realm.h>
+ #include <LibRegex/ECMAScriptRegex.h>
+ #include <LibURL/Parser.h>
++#include <LibWeb/ContentSecurityPolicy/BlockingAlgorithms.h>
+ #include <LibWeb/ContentSecurityPolicy/Directives/Directive.h>
+ #include <LibWeb/ContentSecurityPolicy/Policy.h>
+ #include <LibWeb/ContentSecurityPolicy/PolicyList.h>
+@@ -24,6 +26,7 @@
+ #include <LibWeb/Fetch/Fetching/Fetching.h>
+ #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+ #include <LibWeb/Fetch/Infrastructure/FetchController.h>
++#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
+ #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
+ #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
+ #include <LibWeb/Fetch/Infrastructure/HTTP/Statuses.h>
+@@ -70,8 +73,8 @@ GC::Ref<SealedField> SealedField::create(JS::Realm& realm, HTMLInputElement& ele
+     return realm.create<SealedField>(element);
+ }
+ 
+-// The sealed-fields directive names autocomplete tokens; an <input> whose autocomplete attribute's last
+-// token is listed gets a SealedField as if it were a <sealedinput>. Enforced policies only.
++// The sealed-fields directive names autofill field names; an <input> whose parsed autocomplete field name is listed
++// gets a SealedField as if it were a <sealedinput>. Enforced policies only.
+ bool SealedField::document_policy_seals_autocomplete_token(DOM::Document const& document, Utf16View token)
+ {
+     if (token.is_empty())
+@@ -90,33 +93,22 @@ bool SealedField::document_policy_seals_autocomplete_token(DOM::Document const&
+     return false;
+ }
+ 
+-// HTML "ASCII whitespace": TAB, LF, FF, CR, SPACE (not VT).
+-static bool is_html_ascii_whitespace(char16_t code_unit)
+-{
+-    return code_unit == u' ' || code_unit == u'\t' || code_unit == u'\n' || code_unit == u'\f' || code_unit == u'\r';
+-}
+-
+-static Utf16View last_ascii_whitespace_token(Utf16View input)
+-{
+-    size_t end = input.length_in_code_units();
+-    while (end > 0 && is_html_ascii_whitespace(input.code_unit_at(end - 1)))
+-        --end;
+-    size_t start = end;
+-    while (start > 0 && !is_html_ascii_whitespace(input.code_unit_at(start - 1)))
+-        --start;
+-    return input.substring_view(start, end - start);
+-}
+-
+ GC::Ptr<SealedField> SealedField::create_if_policy_applies(JS::Realm& realm, HTMLInputElement& element)
+ {
+-    auto autocomplete = element.get_attribute(AttributeNames::autocomplete);
+-    if (!autocomplete.has_value())
++    if (!element.has_attribute(AttributeNames::autocomplete))
+         return nullptr;
+-    // autocomplete may carry section/contact tokens before the field name; the field name is last.
+-    auto token = last_ascii_whitespace_token(autocomplete->utf16_view());
+-    if (token.is_empty())
++    // HTML's autofill processing model yields the field name, so "billing cc-number" matches a cc-number directive.
++    // With a non-autofill credential type the model leaves "webauthn" as the field name (its step 16 never reassigns
++    // field); the directive names the credential field in front of that token.
++    auto details = element.parse_autocomplete_attribute();
++    auto field_name = details.field_name;
++    if (details.credential_type.has_value()) {
++        auto tokens = element.autocomplete_tokens();
++        field_name = tokens.size() >= 2 ? tokens[tokens.size() - 2] : Utf16String {};
++    }
++    if (field_name.is_empty())
+         return nullptr;
+-    if (!document_policy_seals_autocomplete_token(element.document(), token))
++    if (!document_policy_seals_autocomplete_token(element.document(), field_name.utf16_view()))
+         return nullptr;
+     return create(realm, element);
+ }
+@@ -158,6 +150,19 @@ void SealedField::fail(StringView reason)
+     m_element->dispatch_event(DOM::CustomEvent::create("sealed-error"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
+ }
+ 
++// Same entry point the form-submission navigation uses: a request for the action with the document's policy
++// container, checked as a "form-submission" navigation so only form-action directives can block it.
++static bool form_action_policy_blocks(DOM::Document& document, URL::URL const& action)
++{
++    auto& realm = relevant_realm(document);
++    auto request = Fetch::Infrastructure::Request::create(realm.vm());
++    request->set_url(action);
++    request->set_client(&document.relevant_settings_object());
++    request->set_policy_container(document.policy_container());
++    auto result = ContentSecurityPolicy::should_navigation_request_of_type_be_blocked_by_content_security_policy(request, ContentSecurityPolicy::Directives::Directive::NavigationType::FormSubmission);
++    return result == ContentSecurityPolicy::Directives::Directive::Result::Blocked;
++}
++
+ void SealedField::start()
+ {
+     // Fail closed while re-discovering: a stale key must never be paired with a fresh slot AAD, and a
+@@ -193,6 +198,10 @@ void SealedField::start()
+     // file:, about:, blob: and data: actions have opaque origins; there is no recipient to discover.
+     if (action->origin().is_opaque())
+         return fail("insecure-action"sv);
++    // The page's form-action policy gates the recipient the same way it gates the eventual submission, so retargeting
++    // the form at an origin the policy forbids cannot redirect the seal.
++    if (form_action_policy_blocks(document, *action))
++        return fail("insecure-action"sv);
+ 
+     // 3. The slot binds the envelope to this origin, this action (origin + path), and this field name.
+     auto action_origin = action->origin().serialize();
+@@ -224,6 +233,10 @@ void SealedField::start()
+         response = response->unsafe_response();
+         if (!Fetch::Infrastructure::is_ok_status(response->status()))
+             return fail("recipient-unreachable"sv);
++        // The key set is JSON or it is not a key set; a mislabeled body is a recipient fault, not a network one.
++        auto mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
++        if (!mime_type.has_value() || mime_type->essence() != "application/json"sv)
++            return fail("recipient-invalid"sv);
+         body_bytes.visit(
+             [&](Core::ImmutableBytes const& bytes) { process_well_known(bytes.bytes()); },
+             [&](auto const&) { fail("recipient-unreachable"sv); });
+@@ -260,6 +273,15 @@ void SealedField::process_well_known(ReadonlyBytes body)
+         point[0] = 0x04;
+         point.overwrite(1, x_bytes.value().data(), 32);
+         point.overwrite(33, y_bytes.value().data(), 32);
++        // A well-formed JWK can still name coordinates off the curve; such a key can never seal, so skip it now
++        // rather than reporting ready and failing at the first keystroke.
++        auto parsed_point = ::Crypto::Curves::SECPxxxr1Point::from_uncompressed(point);
++        if (parsed_point.is_error())
++            continue;
++        ::Crypto::Curves::SECP256r1 curve;
++        auto is_valid_point = curve.is_valid_point(parsed_point.release_value());
++        if (is_valid_point.is_error() || !is_valid_point.value())
++            continue;
+         return become_ready(*kid, move(point));
+     }
+     fail("recipient-invalid"sv);
+@@ -274,7 +296,8 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
+     // Seal whatever is already in the box (a page-supplied value attribute, say) so the envelope never disagrees with
+     // the visible text, and so an untouched required field is invalid rather than blank-and-valid.
+     reseal(m_element->sealed_plaintext());
+-    // A first seal against an unusable curve point fails the field; sealed-error has already been dispatched.
++    // The key was validated on the curve before we got here, so this only trips if sealing itself fails; then
++    // sealed-error has already been dispatched and sealed-ready must not follow it.
+     if (m_failed)
+         return;
+     DOM::EventInit init {};
+@@ -387,8 +410,8 @@ void SealedField::reseal(Utf16View plaintext)
+ 
+     auto padded = pad_plaintext(utf8.bytes());
+     auto sealed = ::Crypto::HPKE::seal(m_recipient_public_key, hpke_info.bytes(), m_slot_aad, padded);
+-    // The well-known JWK was syntactically valid, but the engine only learns whether x/y form a usable
+-    // curve point at the first seal. This is the deferred half of the recipient-invalid check.
++    // The recipient key was checked on the curve at discovery, so a failure here is HPKE itself refusing; fail
++    // closed rather than expose an empty or stale envelope.
+     if (sealed.is_error())
+         return fail("recipient-invalid"sv);
+     auto enc = MUST(encode_base64url(sealed.value().enc, AK::OmitPadding::Yes));
+@@ -422,6 +445,9 @@ void SealedField::detach()
+     m_envelope = {};
+     m_frozen = false;
+     m_constraints = {};
++    // The plaintext leaves with the recipient: keeping it would let remove/reinsert probe a new pattern against the
++    // old text, or reseal it to whichever form the element lands in next. Reinsertion starts empty.
++    MUST(m_element->set_relevant_value({}));
+     set_element_custom_validity(unavailable_message);
+ }
+ 
+diff --git a/Libraries/LibWeb/Page/EventHandler.cpp b/Libraries/LibWeb/Page/EventHandler.cpp
+index 216fd415..7886df00 100644
+--- a/Libraries/LibWeb/Page/EventHandler.cpp
++++ b/Libraries/LibWeb/Page/EventHandler.cpp
+@@ -1775,6 +1775,16 @@ static GC::Ptr<DOM::EventTarget> clipboard_event_target(DOM::Document& document)
+     return document.document_element();
+ }
+ 
++// The paste lands in the active input events target; the focused area is where the clipboard event would go.
++static bool paste_target_is_sealed_input(DOM::Document& document)
++{
++    if (auto* target = document.active_input_events_target(); target && sealed_input_for(*target))
++        return true;
++    if (auto focused_area = document.focused_area(); focused_area && sealed_input_for(*focused_area))
++        return true;
++    return false;
++}
++
+ // https://w3c.github.io/clipboard-apis/#fire-a-clipboard-event
+ static bool fire_clipboard_event(DOM::Document& document, Utf16FlyString const& event_name, GC::Ref<HTML::DataTransfer> data_transfer)
+ {
+@@ -1985,7 +1995,11 @@ EventResult EventHandler::perform_paste_action(NonnullRefPtr<HTML::DragDataStore
+     auto data_transfer = HTML::DataTransfer::create(data_store);
+ 
+     // 2. Fire a clipboard event named paste.
+-    bool event_was_not_canceled = fire_clipboard_event(*document, HTML::EventNames::paste, data_transfer);
++    // A paste into a sealed <input> is not announced to the page: the event's clipboardData is the plaintext about
++    // to enter the field. The UA paste itself still runs below, gated on the field being ready.
++    bool event_was_not_canceled = true;
++    if (!paste_target_is_sealed_input(*document))
++        event_was_not_canceled = fire_clipboard_event(*document, HTML::EventNames::paste, data_transfer);
+     data_store->set_mode(HTML::DragDataStore::Mode::Protected);
+ 
+     // 3. If the event was not canceled, then: if there is a selection or cursor in an editable context where
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt b/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
+index f20612ad..12c7fa11 100644
+--- a/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
++++ b/Tests/LibWeb/Text/expected/HTML/sealed-fields-directive.txt
+@@ -6,3 +6,5 @@ memo-plain=gift
+ formdata-card-equals-value=true
+ card-setter-threw=InvalidStateError
+ memo-setter-works=ok
++late-value-prefix=true
++pw-value-prefix=true
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+index 5af49e27..314c23f3 100644
+--- a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
++++ b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+@@ -13,4 +13,8 @@ valid=true patternMismatch=false customError=false
+ valid-after-pattern-change-and-retype=true
+ value-changed-after-retype=true
+ setter-threw=InvalidStateError
++clone-value=""
++type-after-change=text value-attr-after-type-change=null
++paste-events=0 value-changed-after-paste=true
++value-after-reinsert="" valid-after-reinsert=false
+ value-after-reset="" valid-after-reset=false
+diff --git a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
+index 1e1dc41d..562e3537 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
++++ b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html
+@@ -2,10 +2,14 @@
+ <form action="/submit" method="post">
+     <input name="card" autocomplete="cc-number">
+     <input name="memo" autocomplete="off">
++    <input name="late">
++    <input name="pw" autocomplete="current-password webauthn">
+ </form>
+ <script>
+     // Same as sealedinput-envelope.html: listen synchronously, before the blocking include.js fetch lets discovery run.
+     const sealedReady = new Promise(resolve => document.forms[0].elements.namedItem("card").addEventListener("sealed-ready", resolve, { once: true }));
++    // The directive lists current-password; the field name is parsed out from in front of the webauthn token.
++    const pwReady = new Promise(resolve => document.forms[0].elements.namedItem("pw").addEventListener("sealed-ready", resolve, { once: true }));
+ </script>
+ <script src="../include.js"></script>
+ <script>
+@@ -35,5 +39,20 @@
+         }
+         memo.value = "ok";
+         println(`memo-setter-works=${memo.value}`);
++
++        // The directive is re-evaluated when autocomplete changes on an already-inserted input.
++        const late = form.elements.namedItem("late");
++        const lateReady = new Promise(resolve => late.addEventListener("sealed-ready", resolve, { once: true }));
++        late.setAttribute("autocomplete", "cc-number");
++        await lateReady;
++        late.focus();
++        internals.sendText(late, "4242424242424242");
++        println(`late-value-prefix=${late.value.startsWith("sealed1.rfc-a3-1.")}`);
++
++        const pw = form.elements.namedItem("pw");
++        await pwReady;
++        pw.focus();
++        internals.sendText(pw, "hunter2");
++        println(`pw-value-prefix=${pw.value.startsWith("sealed1.rfc-a3-1.")}`);
+     });
+ </script>
+diff --git a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
+index 6061b058..42e2a8c2 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
++++ b/Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html.headers
+@@ -1 +1 @@
+-Content-Security-Policy: sealed-fields cc-number
++Content-Security-Policy: sealed-fields cc-number current-password
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+index bb99f836..4d31d68a 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+@@ -51,6 +51,25 @@
+             println(`setter-threw=${e.name}`);
+         }
+ 
++        println(`clone-value=${JSON.stringify(el.cloneNode().value)}`);
++
++        el.type = "hidden";
++        el.type = "checkbox";
++        println(`type-after-change=${el.type} value-attr-after-type-change=${el.getAttribute("value")}`);
++
++        let pasted = 0;
++        el.addEventListener("paste", () => pasted++);
++        const beforePaste = el.value;
++        internals.paste(el, "555");
++        println(`paste-events=${pasted} value-changed-after-paste=${el.value !== beforePaste}`);
++
++        // Removal drops the recipient and the plaintext; reinsertion re-runs discovery from scratch.
++        const readyAgain = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        el.remove();
++        form.append(el);
++        await readyAgain;
++        println(`value-after-reinsert=${JSON.stringify(el.value)} valid-after-reinsert=${el.checkValidity()}`);
++
+         form.reset();
+         println(`value-after-reset=${JSON.stringify(el.value)} valid-after-reset=${el.checkValidity()}`);
+     });
+-- 
+2.55.0
+

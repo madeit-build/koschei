@@ -1,3 +1,3 @@
-{"time":"2026-09-19T04:16:11.539Z","event":"demo.listening","pageOrigin":"http://localhost:4780","recipientOrigin":"http://localhost:4781"}
-{"time":"2026-09-19T04:16:13.326Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
-{"time":"2026-09-19T04:16:18.501Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
+{"time":"2026-09-20T00:08:59.445Z","event":"demo.listening","pageOrigin":"http://localhost:4780","recipientOrigin":"http://localhost:4781"}
+{"time":"2026-09-20T00:09:00.875Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
+{"time":"2026-09-20T00:09:06.155Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}

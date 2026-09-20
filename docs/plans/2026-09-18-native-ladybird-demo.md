@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Two working directories. **Engine work** happens in the Ladybird checkout `$LADYBIRD_DIR` (on this machine `~/code/scratch/ladybird`), on branch `koschei-sealedinput` cut from `1010a932`; every engine task ends with a commit there. **Repo work** happens in the koschei worktree `koschei-worktrees/native-ladybird-demo` on branch `native-ladybird-demo`. Never confuse the two; every step says which.
+- Two working directories. **Engine work** happens in the Ladybird checkout `$LADYBIRD_DIR` (e.g. `/path/to/ladybird`), on branch `koschei-sealedinput` cut from `1010a932`; every engine task ends with a commit there. **Repo work** happens in the koschei worktree `koschei-worktrees/native-ladybird-demo` on branch `native-ladybird-demo`. Never confuse the two; every step says which.
 - Engine build environment: `export PATH="/opt/homebrew/opt/rustup/bin:/opt/homebrew/opt/ccache/libexec:/opt/homebrew/bin:$PATH"` before any `./Meta/ladybird.py` call. Incremental builds take minutes, not the initial hour. Build output is `Build/release/bin/`.
 - Envelope must be byte-compatible with the polyfill: `sealed1.<kid>.<base64url(enc)>.<base64url(ct)>`, no padding; `kid` matches `^[A-Za-z0-9_-]{1,64}$`; plaintext `uint16 BE length || UTF-8 || zero pad` to a multiple of 32; HPKE `info` = `sealed-input/1`; `aad` = `<document origin>\n<action origin + pathname>\n<field name>`; suite `DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-128-GCM`, base mode, sequence number 0; `ct` = AEAD ciphertext followed by the 16-byte tag.
 - The document origin comes from `element.document().origin().serialize()`. The action comes from the owning form, parsed against the document; `search` and `hash` dropped. A form action that is not potentially trustworthy (`SecureContexts::is_url_potentially_trustworthy`) fails with `insecure-action`.
@@ -1395,8 +1395,8 @@ Expected: `exit=0` twice, `200`, and a CSP header line containing `sealed-fields
 
 Patch series against Ladybird `1010a932`. See `docs/specs/native-ladybird-design.md`.
 
-    LADYBIRD_DIR=~/code/scratch/ladybird native/ladybird/apply-and-build.sh   # ~1 h cold, minutes warm
-    LADYBIRD_DIR=~/code/scratch/ladybird native/ladybird/run-demo.sh          # writes docs/research/assets/ladybird-*.png and native-demo.jsonl
+    LADYBIRD_DIR=/path/to/ladybird native/ladybird/apply-and-build.sh   # ~1 h cold, minutes warm
+    LADYBIRD_DIR=/path/to/ladybird native/ladybird/run-demo.sh          # writes docs/research/assets/ladybird-*.png and native-demo.jsonl
 
 `run-demo.sh` exits non-zero unless the recipient logged at least one `sealed-input.unseal` with `outcome: ok`.
 ```
@@ -1438,7 +1438,7 @@ Append to `docs/research/native-feasibility-ladybird.md`:
 ```markdown
 ## Results
 
-Patch series `native/ladybird/0001..0004` against `1010a932`. `TestHPKE` reproduces RFC 9180
+Patch series `native/ladybird/*.patch` against `1010a932`. `TestHPKE` reproduces RFC 9180
 A.3.1 `enc` and `ct` from the vector `ikmE` and opens the vector ciphertext. Two Ladybird Text
 tests pass under `test-web`: `sealedinput-envelope` (element path) and
 `sealed-fields-directive` (header-delivered CSP, served by the echo server). The koschei demo

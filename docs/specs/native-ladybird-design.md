@@ -19,7 +19,14 @@ opened by the same `unseal`. Companion to
    and one-bit validity. `<sealedinput>` is a thin element that owns a
    `SealedField` unconditionally. The `sealed-fields` CSP directive attaches a
    `SealedField` to an ordinary `<input>` whose `autocomplete` token the
-   directive names. Same mechanism, two opt-ins.
+   directive names. The directive matches the field name as HTML's
+   autocomplete parser yields it, except that when a credential type token
+   (`webauthn`) is present, the field name is the token before it, so
+   `current-password webauthn` matches a `current-password` directive. Same
+   mechanism, two opt-ins. Discovery also applies the page's `form-action`
+   CSP policy to the resolved action before the well-known fetch, so
+   retargeting the form cannot redirect the seal; a block fails with
+   `insecure-action`.
 3. **Guards, not logic, in `HTMLInputElement.cpp`.** Every change to the
    existing input element is a one-line `if (m_sealed_field) ...` delegate.
    The set of guards is the explainer's Element surface table, row by row
@@ -55,13 +62,13 @@ Each row of the explainer's Element surface becomes exactly one guard.
 | Re-seal on every input | `HTMLInputElement.cpp` `did_edit_text_node()` | `if (m_sealed_field) m_sealed_field->reseal(m_value);` |
 | `input`/`change` fire with `data` null | `HTMLInputElement.cpp` `did_edit_text_node()` | pass `{}` instead of `data` when sealed |
 | `keydown`/`keyup`/`keypress` not dispatched | `Page/EventHandler.cpp` keyboard dispatch | skip script dispatch when the target's input is sealed; UA default action still runs |
-| `beforeinput`/`compositionupdate` not dispatched | `Page/EventHandler.cpp` / `FormAssociatedElement.cpp` | same guard at the input-event dispatch |
+| `beforeinput` not dispatched | `Page/EventHandler.cpp` | same guard at the input-event dispatch |
 | `selectionStart`/`selectionEnd` absent | `HTMLInputElement.cpp` selection getters | return `0` when sealed |
 | `setSelectionRange()`/`select()`/`setRangeText()` absent | `HTMLInputElement.cpp` | no-op when sealed |
 | Constraints frozen on first input | `SealedField` | snapshot `pattern`/`minlength`/`maxlength`/`required` on first `reseal` |
 | Validity is one bit | `HTMLInputElement.cpp` constraint checks | `if (m_sealed_field) return m_sealed_field->is_invalid();` in the aggregate, individual flags false |
 | Attach by policy | `HTMLInputElement.cpp` `form_associated_element_was_inserted()` | `m_sealed_field = SealedField::create_if_policy_applies(*this);` |
-| Fail closed until ready | `SealedField` | disabled until the well-known fetch completes and the key imports |
+| Fail closed until ready | `SealedField` | insertions ignored until the well-known fetch completes and the key imports |
 | `sealed-ready` / `sealed-error` | `SealedField` | dispatched on the owning element |
 | Entry list carries the envelope | none | the generic branch already reads `value()` |
 
@@ -74,6 +81,17 @@ Added during implementation, beyond the explainer's original Element surface tab
 | `getSelection().toString()` returns empty for a sealed field | `HTMLInputElement.cpp` `selected_text_for_stringifier()` | `if (m_sealed_field) return {};` |
 | Paste ignored until ready | `Page/EventHandler.cpp` `insert_pasted_content()` | `if (sealed_input_is_not_ready(*target)) return EventResult::Handled;` |
 | `selectionDirection` bindings guarded | `FormAssociatedElement.cpp` `set_selection_direction_binding()` | `if (is_sealed_text_control()) return {};` |
+
+Added in the final fix wave (C1–C4, and two folded minors):
+
+| Explainer row | File | Guard |
+|---|---|---|
+| C1: `cloneNode()` leaves the clone empty | `HTMLInputElement.cpp` `cloned()` | `m_value`/`m_dirty_value` copied to the clone only when `!m_sealed_field`; checkedness still propagates |
+| C2: `type` changes ignored once sealed | `HTMLInputElement.cpp` `form_associated_element_attribute_changed()` / `type_attribute_changed()` | early return, and an added `!m_sealed_field` guard, when `m_sealed_field` is set; `<sealedinput>` additionally overrides `form_associated_element_attribute_changed()` to ignore `type` unconditionally, from markup or script (`HTMLSealedInputElement.cpp`) |
+| C3: `detach()` clears the value | `SealedField.cpp` `detach()` | `MUST(m_element->set_relevant_value({}))` after thawing constraints; reinsertion starts empty |
+| C4: paste `ClipboardEvent` not dispatched to a sealed target | `Page/EventHandler.cpp` `perform_paste_action()` | `fire_clipboard_event(paste, …)` skipped and treated as not canceled for a sealed target; the UA's own paste still lands once ready; copy/cut untouched |
+| Minor: `Content-Type` required | `SealedField.cpp` well-known fetch callback | MIME essence of the response must equal `application/json`, else `fail("recipient-invalid")` |
+| Minor: `setCustomValidity()` is a no-op | `HTMLInputElement.cpp` `set_custom_validity_binding()` | returns early when `m_sealed_field`; `SealedField`'s own internal calls are unaffected |
 
 ## Envelope compatibility
 
@@ -100,8 +118,9 @@ engine, never from markup. The action is the owning form's resolved action.
 - `native/ladybird/apply-and-build.sh` and `native/ladybird/run-demo.sh`
   (take `LADYBIRD_DIR`; never assume a path)
 - Demo routes `/native` and `/native-directive` in `demo/serve.ts`
-- Ladybird Text test under `Tests/LibWeb/Text/input/HTML/sealedinput-*.html`
-  (inside the patch series)
+- Ladybird Text tests under `Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html`
+  and `Tests/LibWeb/Text/input/HTML/sealed-fields-directive.html` (inside the
+  patch series)
 - `docs/research/assets/ladybird-native.png` and
   `docs/research/assets/ladybird-native-directive.png` (the two "after"
   screenshots, element path and directive path), alongside the existing

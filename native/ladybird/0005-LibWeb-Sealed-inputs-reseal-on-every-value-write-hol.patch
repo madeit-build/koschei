@@ -1,7 +1,7 @@
 From e464daaa6a2a6d9cc96e729f4d1e6155129772bb Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 22:09:00 -0500
-Subject: [PATCH 5/9] LibWeb: Sealed inputs reseal on every value write, hold
+Subject: [PATCH 05/11] LibWeb: Sealed inputs reseal on every value write, hold
  required when untouched, and restart on reinsertion
 
 ---

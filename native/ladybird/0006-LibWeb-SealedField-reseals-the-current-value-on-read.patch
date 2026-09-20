@@ -1,7 +1,7 @@
 From a654ed2ab770b62e1de1e48392bb95e460a6dd9b Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 22:10:55 -0500
-Subject: [PATCH 6/9] LibWeb: SealedField reseals the current value on ready
+Subject: [PATCH 06/11] LibWeb: SealedField reseals the current value on ready
 
 ---
  Libraries/LibWeb/HTML/SealedField.cpp | 8 ++++++--

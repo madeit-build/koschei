@@ -23,7 +23,6 @@ Paths are relative to the Ladybird checkout. Line numbers are at `1010a932`.
 | New element (not a new `type`)          | `Libraries/LibWeb/HTML/TagNames.h:79` (`__ENUMERATE_HTML_TAG`), `Libraries/LibWeb/DOM/ElementFactory.cpp:383` (`REGISTER_HTML_ELEMENT`), `Libraries/LibWeb/idl_files.cmake:274` (`libweb_js_bindings`)                                                                                                                                              | Add `sealedinput`, new `HTML/HTMLSealedInputElement.{h,cpp,idl}`. `HTMLOutputElement` is the size template: 201 lines across three files.                                                                                                                                                                           |
 | Keystrokes never reach JS               | `Libraries/LibWeb/HTML/FormAssociatedElement.h:280-308` (`FormAssociatedTextControlElement`: `handle_insert`, `handle_delete`, `relevant_value`, `did_edit_text_node`); caller is `Libraries/LibWeb/Page/EventHandler.cpp:1462,1263`                                                                                                                | Implement the mixin. Plaintext lives in a C++ member. The IDL `value` getter returns the envelope; there is no getter for the plaintext, so LibJS never allocates a string containing it.                                                                                                                           |
 | Rendering                               | `Libraries/LibWeb/HTML/HTMLInputElement.cpp:~1200-1290` (`create_text_input_shadow_tree`)                                                                                                                                                                                                                                                           | Borrow ~100 lines of the UA shadow tree pattern (inner text element, `DOM::Text` node, placeholder). Not exposed to script: `Element::open_shadow_root()` (`DOM/Element.cpp:2805`) returns null for UA trees.                                                                                                       |
-| Envelope submitted like any field       | `Libraries/LibWeb/HTML/FormControlInfrastructure.cpp:111` (`construct_entry_list`), field loop at `:176-215`                                                                                                                                                                                                                                        | One new branch: if field is a `sealedinput`, `create_entry(name, envelope)`. Same shape as the existing `select` / checkbox / file branches.                                                                                                                                                                        |
 | HPKE in-engine                          | `Libraries/LibCrypto/Curves/SECPxxxr1.h:161-190` (`SECP256r1::generate_private_key`, `generate_public_key`, `compute_coordinate`), `Libraries/LibCrypto/Hash/HKDF.h:28` (`derive_key(salt, ikm, info, len)`), `Libraries/LibCrypto/Cipher/AES.h:50-60` (`AESGCMCipher::encrypt(plaintext, iv, aad, taglen)`), `AK/Random.h:21` (`fill_with_random`) | All primitives exist, OpenSSL-backed. RFC 9180 composition (`LabeledExtract`, `LabeledExpand`, `Encap`, `KeySchedule`, `Seal`) is ~150 lines in a new `LibCrypto/HPKE.{h,cpp}`. RFC 9180 Appendix A.3 is _exactly_ our suite (DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-128-GCM), so test vectors are ready-made. |
 | Recipient discovery                     | `Libraries/LibWeb/HTML/HTMLLinkElement.cpp:507-541` as the pattern (`Fetch::Infrastructure::Request::create`, `FetchAlgorithms::Input::process_response_consume_body`, `Fetch::Fetching::fetch`)                                                                                                                                                    | On insertion, resolve owning form's `action`, fetch `<origin>/.well-known/sealed-input` with mode `cors`, credentials `omit`, parse JWK `x`/`y` into a `SECPxxxr1Point`. Disabled until the key arrives; disabled forever on failure. Fail closed.                                                                  |
 | `form-action` enforcement               | `Libraries/LibWeb/ContentSecurityPolicy/Directives/FormActionDirective.cpp` (38 lines, `pre_navigation_check`)                                                                                                                                                                                                                                      | Already implemented. The demo inherits it for free, which is one of the points.                                                                                                                                                                                                                                     |
@@ -208,17 +207,29 @@ demo's first screenshot.
 
 ## Results
 
-Patch series `native/ladybird/0001..0009` against `1010a932`. `TestHPKE` reproduces RFC 9180
+Patch series `native/ladybird/*.patch` against `1010a932`. `TestHPKE` reproduces RFC 9180
 A.3.1 `enc` and `ct` from the vector `ikmE` and opens the vector ciphertext. Two Ladybird Text
 tests pass under `test-web`: `sealedinput-envelope` (element path) and
-`sealed-fields-directive` (header-delivered CSP, served by the echo server). The koschei demo
+`sealed-fields-directive` (header-delivered CSP, served by the echo server). The demo page posts
+`field.value` through `fetch`, while the Text tests exercise the entry-list path instead,
+through `new FormData(form)`, so both submission shapes are covered. The koschei demo
 recipient opened envelopes produced by Ladybird for both `/native` and `/native-directive`:
 
-    {"time":"2026-09-19T04:16:13.326Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
-    {"time":"2026-09-19T04:16:18.501Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
+    {"time":"2026-09-20T00:09:00.875Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
+    {"time":"2026-09-20T00:09:06.155Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
 
 Screenshots: `assets/ladybird-native.png`, `assets/ladybird-native-directive.png`. Compare with
 `assets/ladybird-sealedinput-unknown.png` (before).
+
+The final fix wave closed four plaintext channels the first pass left open (clone, `type`
+change, paste, detach/reinsert) and re-evaluates the `sealed-fields` directive on every
+`autocomplete` change instead of only at insertion. The evidence is new lines in the Text
+tests' expected output: `clone-value=""`, `type-after-change=text
+value-attr-after-type-change=null`, `paste-events=0 value-changed-after-paste=true`,
+`value-after-reinsert="" valid-after-reinsert=false`, `markup-type-ignored=text` (in
+`sealedinput-envelope.txt`, covering C1–C4 plus the markup-`type` follow-up), and
+`late-value-prefix=true`, `pw-value-prefix=true` (in `sealed-fields-directive.txt`, covering
+I2's re-evaluation-on-insertion and the `webauthn` credential-type field-name rule).
 
 Deviations from the explainer that a native implementer should know:
 
@@ -233,3 +244,14 @@ Deviations from the explainer that a native implementer should know:
 - Renderer memory still holds the plaintext (see [Beyond v1](#beyond-v1-trusted-path-input)).
 - LibCrypto key material is not zeroized and `derive_key_pair` is not constant-time
   (test-vector path only).
+- Copy and cut from a sealed field yield nothing; only paste is gated on readiness.
+- The well-known's `frame` field is ignored natively, so `frame-blocked` is never raised;
+  that reason exists only for the polyfill's iframe boundary.
+- `insecure-context` is judged by the document's URL trustworthiness, not the full
+  secure-context algorithm.
+- The `value` setter works on a `<sealedinput>` before insertion; it seals once the field
+  becomes ready, not before.
+- The well-known response's `Content-Type` must now be `application/json` (by MIME essence),
+  or discovery fails with `recipient-invalid`.
+- `form-action` is enforced at discovery, not only at form submission: a blocked action fails
+  with `insecure-action` before the well-known fetch.
