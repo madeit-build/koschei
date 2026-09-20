@@ -1,7 +1,7 @@
 From ab340ec810c4ecad7adf8f3406edfe3d862e4b8d Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 22:54:03 -0500
-Subject: [PATCH 09/12] LibWeb: Add <sealedinput> and the sealed-fields CSP
+Subject: [PATCH 09/13] LibWeb: Add <sealedinput> and the sealed-fields CSP
  directive, with Text tests
 
 ---

@@ -1,7 +1,7 @@
 From 077af8a091b68b23ae1f725bfe8a7cd88859a24e Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 21:51:23 -0500
-Subject: [PATCH 04/12] LibWeb: Route sealed inputs through SealedField (value,
+Subject: [PATCH 04/13] LibWeb: Route sealed inputs through SealedField (value,
  events, selection, validity)
 
 ---

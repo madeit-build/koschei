@@ -62,12 +62,12 @@ Each row of the explainer's Element surface becomes exactly one guard.
 | Re-seal on every input | `HTMLInputElement.cpp` `set_relevant_value()` (the UA editing write site; `attribute_changed(value)` and `reset_algorithm()` reseal too) | `if (m_sealed_field) m_sealed_field->reseal(m_value);` |
 | `input`/`change` fire with `data` null | `HTMLInputElement.cpp` `did_edit_text_node()` | pass `{}` instead of `data` when sealed |
 | `keydown`/`keyup`/`keypress` not dispatched | `Page/EventHandler.cpp` keyboard dispatch | skip script dispatch when the target's input is sealed; UA default action still runs |
-| `beforeinput` not dispatched | `Page/EventHandler.cpp` | same guard at the input-event dispatch |
+| `beforeinput` not dispatched | `Page/EventHandler.cpp` | same guard at the input-event dispatch. Exception: keyboard undo/redo (`Editing/EditingHistory.cpp` `perform_history_action()`) dispatches one trusted cancelable `beforeinput` (`historyUndo`/`historyRedo`, `data` null, no target ranges) at the step's host; availability-only, no text crosses |
 | `selectionStart`/`selectionEnd` absent | `HTMLInputElement.cpp` selection getters | return `0` when sealed |
 | `setSelectionRange()`/`select()`/`setRangeText()` absent | `HTMLInputElement.cpp` | no-op when sealed |
 | Constraints frozen on first input | `SealedField` | snapshot `pattern`/`minlength`/`maxlength`/`required` on first `reseal` |
 | Validity is one bit | `HTMLInputElement.cpp` constraint checks | `if (m_sealed_field) return m_sealed_field->is_invalid();` in the aggregate, individual flags false |
-| Attach by policy | `HTMLInputElement.cpp` `form_associated_element_was_inserted()` and the `autocomplete` branch of `attribute_changed()` | `m_sealed_field = SealedField::create_if_policy_applies(*this);` then `queue_sealed_field_start()`; a field never un-seals |
+| Attach by policy | `HTMLInputElement.cpp` `form_associated_element_was_inserted()` and the `autocomplete` branch of `form_associated_element_attribute_changed()` | `m_sealed_field = SealedField::create_if_policy_applies(*this);` then `queue_sealed_field_start()`; a field never un-seals |
 | Fail closed until ready | `SealedField` | insertions ignored until the well-known fetch completes and the key imports |
 | `sealed-ready` / `sealed-error` | `SealedField` | dispatched on the owning element |
 | Entry list carries the envelope | none | the generic branch already reads `value()` |
@@ -97,10 +97,11 @@ Added in hardening round A (H1–H3):
 
 | Explainer row | File | Guard |
 |---|---|---|
-| H1: `document.execCommand()` edits ignored, return `false` | `Editing/ExecCommand.cpp` `query_command_enabled()` | a range inside a sealed text control's shadow tree enables no command; `undo`/`redo` are disabled while the next history step's editing host `is_sealed_text_control()`. `execCommand` step 3 then returns `false`. The keyboard shortcuts go through `Editing::perform_history_action()`, which never consults this, so the user's undo still works |
+| H1: `document.execCommand()` edits ignored, return `false` | `Editing/ExecCommand.cpp` `query_command_enabled()` | a range inside a sealed text control's shadow tree enables no command; `undo`/`redo` are disabled while the next history step's editing host `is_sealed_text_control()`. `execCommand` step 3 then returns `false`. The keyboard shortcuts go through `Editing::perform_history_action()`, which never consults this, so the user's undo still works. `queryCommandEnabled("undo"\|"redo")` reads `false` in the same state: an accepted one-bit availability signal (an edit happened in a sealed field), never content or length |
 | H2: IME composition text dropped before ready | `HTML/LocalNavigable.cpp` the three `handle_insert(insertCompositionText, …)` sites | `if (sealed_input_target_is_not_ready(*target)) return;` before each insert, mirroring the keyboard and paste gates |
-| H3: `name` change re-derives the slot | `HTMLInputElement.cpp` `attribute_changed()` `name` branch | `m_sealed_field->detach(); queue_sealed_field_start();` when the value changed |
+| H3: `name` change re-derives the slot | `HTMLInputElement.cpp` `form_associated_element_attribute_changed()` `name` branch | `m_sealed_field->detach(); queue_sealed_field_start();` when the value changed |
 | H3: owning form `action` change re-derives the slot | `HTMLFormElement.cpp` `attribute_changed()` `action` branch → `FormAssociatedElement::form_action_changed(Badge<HTMLFormElement>)` → `HTMLInputElement::form_action_changed()` | same detach-and-requeue for every associated sealed input |
+| B-F1: `detach()` and `reset()` forget the field's editing history | `Editing/EditingHistory.cpp` `forget_steps_for_editing_host()`, called from `SealedField.cpp` `detach()` and `reset()` | drops every undo/redo step (and any open or in-progress step) whose editing host is the field, then notifies the UI; otherwise the user's Ctrl+Z after a rename/retarget would replay old plaintext through `ReplaceDataCommand::replay` under the new slot and key, and refreeze constraints against it |
 
 ## Envelope compatibility
 

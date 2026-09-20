@@ -215,8 +215,8 @@ tests pass under `test-web`: `sealedinput-envelope` (element path) and
 through `new FormData(form)`, so both submission shapes are covered. The koschei demo
 recipient opened envelopes produced by Ladybird for both `/native` and `/native-directive`:
 
-    {"time":"2026-09-20T00:41:57.712Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
-    {"time":"2026-09-20T00:42:02.972Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
+    {"time":"2026-09-20T01:02:09.712Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"ssn"}}
+    {"time":"2026-09-20T01:02:14.987Z","event":"sealed-input.unseal","outcome":"ok","kid":"demo","expected":{"origins":["http://localhost:4780"],"action":"http://localhost:4781/enroll","name":"card"}}
 
 Screenshots: `assets/ladybird-native.png`, `assets/ladybird-native-directive.png`. Compare with
 `assets/ladybird-sealedinput-unknown.png` (before).
@@ -238,7 +238,11 @@ execCommand-undo=false queryCommandEnabled-undo=false value-changed-by-execComma
 `keyboard-undo-changed-value=true` (the user's own shortcut still works),
 `value-after-rename="" name-after-rename=ssn2`, `ready-after-form-action-change=true`.
 `TestHPKE` gains four negative cases (off-curve recipient key, 64-byte `enc`, 15-byte
-ciphertext, empty-plaintext round trip).
+ciphertext, empty-plaintext round trip). Round B closed the editing-history carry-over:
+`value-after-undo-post-rename="" valid-after-undo-post-rename=false`,
+`value-after-redo-post-rename=""`, and `execCommand-redo=false queryCommandEnabled-redo=false`
+in the same file; without the fix the first line read back a fresh envelope of the deleted
+text.
 
 Deviations from the explainer that a native implementer should know:
 
@@ -271,3 +275,13 @@ Deviations from the explainer that a native implementer should know:
 - `document.execCommand()` edits are ignored and return `false`, including `undo` and `redo`
   while the next history step belongs to a sealed field; the keyboard shortcuts still work.
 - IME composition text is dropped before ready, like keyboard and paste input.
+- `detach()` (removal, owner change, `name` change, form `action` change) and form reset forget
+  the field's undo/redo history: undo does not cross a rename or retarget, so old plaintext is
+  never resealed under a new slot, key, or constraint set.
+- `queryCommandEnabled("undo"|"redo")` reads `false` while the next history step belongs to a
+  sealed field. Accepted as a one-bit availability signal: it says an edit happened in a
+  sealed field (indistinguishable from an empty history), never content or length.
+- The user's keyboard undo/redo dispatches one trusted, cancelable `beforeinput`
+  (`historyUndo`/`historyRedo`, `data` null, no target ranges) at the sealed field, the only
+  `beforeinput` a sealed field ever sees. Availability-only: a page can block that undo, and
+  nothing about the text crosses.

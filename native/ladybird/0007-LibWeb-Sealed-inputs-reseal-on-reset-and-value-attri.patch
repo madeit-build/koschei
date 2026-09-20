@@ -1,7 +1,7 @@
 From 1b436ec2a7e4a458e669e56df67dc0fb81bbd4f6 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 22:18:51 -0500
-Subject: [PATCH 07/12] LibWeb: Sealed inputs reseal on reset and value
+Subject: [PATCH 07/13] LibWeb: Sealed inputs reseal on reset and value
  attribute changes; detach on form owner change
 
 ---

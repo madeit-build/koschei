@@ -1,7 +1,7 @@
 From 9aeca46123f548d134591b7c4ea4d3d6c948dc59 Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Fri, 18 Sep 2026 20:55:13 -0500
-Subject: [PATCH 01/12] LibCrypto: Add single-suite HPKE (DHKEM P-256,
+Subject: [PATCH 01/13] LibCrypto: Add single-suite HPKE (DHKEM P-256,
  HKDF-SHA256, AES-128-GCM) with RFC 9180 A.3.1 tests
 
 ---

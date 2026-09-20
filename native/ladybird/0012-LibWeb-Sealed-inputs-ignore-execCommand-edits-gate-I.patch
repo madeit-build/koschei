@@ -1,7 +1,7 @@
 From 587818b9962d87e0494fb2a5cf40113495fc146c Mon Sep 17 00:00:00 2001
 From: Matt deClercq <matthew.declercq@gmail.com>
 Date: Sat, 19 Sep 2026 19:40:06 -0500
-Subject: [PATCH 12/12] LibWeb: Sealed inputs ignore execCommand edits, gate
+Subject: [PATCH 12/13] LibWeb: Sealed inputs ignore execCommand edits, gate
  IME before ready, re-derive the slot on rename or retarget; LibCrypto:
  negative HPKE tests
 

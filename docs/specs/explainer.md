@@ -195,7 +195,7 @@ using `ElementInternals` for form value and validity.
 | `value` setter | Throws `InvalidStateError`. |
 | `validity`, `validationMessage`, `checkValidity()`, `reportValidity()` | Work. `validity` exposes a single `customError` flag, not which constraint failed. `validationMessage` is generic and never echoes input. |
 | `input`, `change` | Dispatched. `InputEvent.data` is `null` and `inputType` is the empty string. |
-| `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `textInput` | Not dispatched to the page. |
+| `keydown`, `keyup`, `keypress`, `beforeinput`, `compositionstart/update/end`, `textInput` | Not dispatched to the page. One exception, native only: the user's keyboard undo/redo dispatches a trusted, cancelable `beforeinput` with `inputType` `historyUndo`/`historyRedo`, `data` null, no `dataTransfer`, no target ranges. It is availability-only: cancelling blocks that undo, and nothing about the text crosses. |
 | `paste` | Not dispatched to the page; the UA's own paste still lands in the field once it is ready. |
 | `selectionStart`, `selectionEnd`, `setSelectionRange()`, `select()` | Not present. |
 | `getSelection().toString()` | Returns `""` for a focused sealed field. |
