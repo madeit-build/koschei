@@ -1,0 +1,99 @@
+From ecc2961d51db27647810e50a87bc3aeac039f5f0 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 22:30:01 -0500
+Subject: [PATCH 08/13] LibWeb: Gate the sealed-field restart on field state;
+ seal m_value, not the text node
+
+---
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp | 11 +++++------
+ Libraries/LibWeb/HTML/HTMLInputElement.h   |  3 ++-
+ Libraries/LibWeb/HTML/SealedField.cpp      |  4 ++--
+ Libraries/LibWeb/HTML/SealedField.h        |  1 +
+ 4 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index 1fc800ed..d9ba2ff9 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -2298,18 +2298,17 @@ void HTMLInputElement::attach_sealed_field()
+ }
+ 
+ // Discovery is queued so that a parser-created element can attach sealed-error listeners before a synchronous
+-// failure (an insecure action, say) fires. Insertion and a form owner change can both ask for it in one turn; a
+-// single task serves both.
++// failure (an insecure action, say) fires. Insertion and a form owner change can both queue it in one turn; the
++// field's own state decides which task actually starts discovery. A task queued against a document that never
++// becomes fully active (a fragment parser's, say) simply never runs, and the next hook queues a fresh one.
+ void HTMLInputElement::queue_sealed_field_start()
+ {
+-    if (!m_sealed_field || m_sealed_field_start_queued)
++    if (!m_sealed_field)
+         return;
+-    m_sealed_field_start_queued = true;
+     queue_an_element_task(HTML::Task::Source::DOMManipulation, [this] {
+-        m_sealed_field_start_queued = false;
+         if (!is_connected())
+             return;
+-        if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed())
++        if (m_sealed_field && !m_sealed_field->is_ready() && !m_sealed_field->has_failed() && !m_sealed_field->is_discovering())
+             m_sealed_field->start();
+     });
+ }
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index 6c0ee931..973d007a 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -285,6 +285,8 @@ public:
+ 
+     // Non-null when this input is a sealed field, either as a <sealedinput> or by the sealed-fields CSP directive.
+     GC::Ptr<SealedField> sealed_field() const { return m_sealed_field; }
++    // The plaintext SealedField seals: the text node may not exist yet and value() returns the envelope.
++    Utf16String const& sealed_plaintext() const { return m_value; }
+ 
+     virtual bool is_mutable() const override;
+     virtual bool uses_button_layout() const override;
+@@ -441,7 +443,6 @@ private:
+     TypeAttributeState m_type { TypeAttributeState::Text };
+     Utf16String m_value;
+     GC::Ptr<SealedField> m_sealed_field;
+-    bool m_sealed_field_start_queued { false };
+ 
+     Utf16String m_last_src_value;
+ 
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 9c780736..4d61c86c 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -273,7 +273,7 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
+     m_failed = false;
+     // Seal whatever is already in the box (a page-supplied value attribute, say) so the envelope never disagrees with
+     // the visible text, and so an untouched required field is invalid rather than blank-and-valid.
+-    reseal(m_element->relevant_value());
++    reseal(m_element->sealed_plaintext());
+     // A first seal against an unusable curve point fails the field; sealed-error has already been dispatched.
+     if (m_failed)
+         return;
+@@ -405,7 +405,7 @@ void SealedField::reset()
+     m_constraints = {};
+     if (!m_ready)
+         return set_element_custom_validity(unavailable_message);
+-    reseal(m_element->relevant_value());
++    reseal(m_element->sealed_plaintext());
+ }
+ 
+ // Removal from the document: forget the recipient entirely. The slot AAD is derived from the owning form's action,
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index eb071c28..b2842c35 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -42,6 +42,7 @@ public:
+     Utf16String const& envelope() const { return m_envelope; }
+     bool is_ready() const { return m_ready; }
+     bool has_failed() const { return m_failed; }
++    bool is_discovering() const { return m_fetch_controller != nullptr; }
+ 
+ private:
+     explicit SealedField(HTMLInputElement&);
+-- 
+2.55.0
+

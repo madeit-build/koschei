@@ -15,6 +15,9 @@ serves the page on `http://localhost:4780` and the recipient on
 `http://localhost:4781`. The API below is the proposal; if it does not read well
 here, the crypto does not matter.
 
+A native implementation for Ladybird lives in `native/ladybird/` as a patch series;
+`docs/research/native-feasibility-ladybird.md` has the results.
+
 ## Usage
 
 ### 1. Set up the recipient

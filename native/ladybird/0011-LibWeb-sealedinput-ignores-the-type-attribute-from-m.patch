@@ -1,0 +1,85 @@
+From 7f243400f0842843b0b590571792404f17b73e36 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Sat, 19 Sep 2026 19:03:52 -0500
+Subject: [PATCH 11/13] LibWeb: <sealedinput> ignores the type attribute from
+ markup too
+
+---
+ Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp       | 10 ++++++++++
+ Libraries/LibWeb/HTML/HTMLSealedInputElement.h         |  1 +
+ .../LibWeb/Text/expected/HTML/sealedinput-envelope.txt |  1 +
+ Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html |  3 +++
+ 4 files changed, 15 insertions(+)
+
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+index 14e4fe82..1598961a 100644
+--- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: BSD-2-Clause
+  */
+ 
++#include <LibWeb/HTML/AttributeNames.h>
+ #include <LibWeb/HTML/HTMLSealedInputElement.h>
+ #include <LibWeb/HTML/SealedField.h>
+ 
+@@ -26,4 +27,13 @@ void HTMLSealedInputElement::form_associated_element_was_inserted()
+     HTMLInputElement::form_associated_element_was_inserted();
+ }
+ 
++// A <sealedinput> is a text control from construction on, before any SealedField is attached: a type attribute from
++// markup must not put it in a state whose value lives in a content attribute.
++void HTMLSealedInputElement::form_associated_element_attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_)
++{
++    if (name == AttributeNames::type)
++        return;
++    HTMLInputElement::form_associated_element_attribute_changed(name, old_value, value, namespace_);
++}
++
+ }
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
+index 1b49fb7b..1681cc3b 100644
+--- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
+@@ -24,6 +24,7 @@ public:
+ private:
+     HTMLSealedInputElement(DOM::Document&, DOM::QualifiedName);
+     virtual void form_associated_element_was_inserted() override;
++    virtual void form_associated_element_attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+ };
+ 
+ }
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+index 314c23f3..329c7180 100644
+--- a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
++++ b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+@@ -17,4 +17,5 @@ clone-value=""
+ type-after-change=text value-attr-after-type-change=null
+ paste-events=0 value-changed-after-paste=true
+ value-after-reinsert="" valid-after-reinsert=false
++markup-type-ignored=text
+ value-after-reset="" valid-after-reset=false
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+index 4d31d68a..84e81b9f 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+@@ -2,6 +2,7 @@
+ <form action="/submit" method="post">
+     <input name="plain" value="typed-plaintext">
+     <sealedinput name="ssn" required pattern="\d{3}-?\d{2}-?\d{4}"></sealedinput>
++    <sealedinput name="pre" type="hidden" required></sealedinput>
+ </form>
+ <script>
+     // Discovery starts from a task queued at insertion and sealed-ready is the only readiness signal, so the listener
+@@ -70,6 +71,8 @@
+         await readyAgain;
+         println(`value-after-reinsert=${JSON.stringify(el.value)} valid-after-reinsert=${el.checkValidity()}`);
+ 
++        println(`markup-type-ignored=${form.elements.namedItem("pre").type}`);
++
+         form.reset();
+         println(`value-after-reset=${JSON.stringify(el.value)} valid-after-reset=${el.checkValidity()}`);
+     });
+-- 
+2.55.0
+

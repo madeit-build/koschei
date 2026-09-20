@@ -1,0 +1,463 @@
+From ab9dcc7de40b9517626a0b46c924d1dddbc89fd5 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 21:13:09 -0500
+Subject: [PATCH 02/13] LibWeb: Add SealedField, the shared core for sealed
+ form fields
+
+---
+ Libraries/LibWeb/CMakeLists.txt       |   1 +
+ Libraries/LibWeb/Forward.h            |   1 +
+ Libraries/LibWeb/HTML/SealedField.cpp | 332 ++++++++++++++++++++++++++
+ Libraries/LibWeb/HTML/SealedField.h   |  77 ++++++
+ 4 files changed, 411 insertions(+)
+ create mode 100644 Libraries/LibWeb/HTML/SealedField.cpp
+ create mode 100644 Libraries/LibWeb/HTML/SealedField.h
+
+diff --git a/Libraries/LibWeb/CMakeLists.txt b/Libraries/LibWeb/CMakeLists.txt
+index 6c157365..f1ab11c2 100644
+--- a/Libraries/LibWeb/CMakeLists.txt
++++ b/Libraries/LibWeb/CMakeLists.txt
+@@ -700,6 +700,7 @@ set(SOURCES
+     HTML/Scripting/WorkerAgent.cpp
+     HTML/Scripting/WorkerEnvironmentSettingsObject.cpp
+     HTML/Scripting/WorkletEnvironmentSettingsObject.cpp
++    HTML/SealedField.cpp
+     HTML/SelectedFile.cpp
+     HTML/SelectItem.cpp
+     HTML/SerializedPolicyContainer.cpp
+diff --git a/Libraries/LibWeb/Forward.h b/Libraries/LibWeb/Forward.h
+index 724e5909..ee0efff5 100644
+--- a/Libraries/LibWeb/Forward.h
++++ b/Libraries/LibWeb/Forward.h
+@@ -866,6 +866,7 @@ class RadioNodeList;
+ class RemoteNavigable;
+ class RemoteWindow;
+ class ScriptRegistry;
++class SealedField;
+ class SelectedFile;
+ class SessionHistoryEntry;
+ class SharedResourceRequest;
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+new file mode 100644
+index 00000000..116b8070
+--- /dev/null
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -0,0 +1,332 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++#include <AK/Base64.h>
++#include <AK/JsonArray.h>
++#include <AK/JsonObject.h>
++#include <AK/JsonValue.h>
++#include <AK/Utf16StringBuilder.h>
++#include <LibCrypto/HPKE.h>
++#include <LibJS/Runtime/Object.h>
++#include <LibJS/Runtime/PrimitiveString.h>
++#include <LibJS/Runtime/Realm.h>
++#include <LibRegex/ECMAScriptRegex.h>
++#include <LibURL/Parser.h>
++#include <LibWeb/ContentSecurityPolicy/Directives/Directive.h>
++#include <LibWeb/ContentSecurityPolicy/Policy.h>
++#include <LibWeb/ContentSecurityPolicy/PolicyList.h>
++#include <LibWeb/DOM/CustomEvent.h>
++#include <LibWeb/DOM/Document.h>
++#include <LibWeb/DOM/Event.h>
++#include <LibWeb/Fetch/Fetching/Fetching.h>
++#include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
++#include <LibWeb/Fetch/Infrastructure/FetchController.h>
++#include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
++#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
++#include <LibWeb/Fetch/Infrastructure/HTTP/Statuses.h>
++#include <LibWeb/HTML/AttributeNames.h>
++#include <LibWeb/HTML/HTMLFormElement.h>
++#include <LibWeb/HTML/HTMLInputElement.h>
++#include <LibWeb/HTML/PolicyContainers.h>
++#include <LibWeb/HTML/Scripting/Environments.h>
++#include <LibWeb/HTML/SealedField.h>
++#include <LibWeb/HighResolutionTime/TimeOrigin.h>
++#include <LibWeb/SecureContexts/AbstractOperations.h>
++
++namespace Web::HTML {
++
++GC_DEFINE_ALLOCATOR(SealedField);
++
++static constexpr StringView envelope_version = "sealed1"sv;
++static constexpr StringView hpke_info = "sealed-input/1"sv;
++static constexpr StringView well_known_path = "/.well-known/sealed-input"sv;
++static constexpr StringView invalid_message = "Please match the requested format."sv;
++static constexpr StringView directive_name = "sealed-fields"sv;
++static constexpr size_t pad_block = 32;
++
++static bool is_valid_kid(StringView kid)
++{
++    if (kid.is_empty() || kid.length() > 64)
++        return false;
++    for (auto ch : kid) {
++        if (!(is_ascii_alphanumeric(ch) || ch == '_' || ch == '-'))
++            return false;
++    }
++    return true;
++}
++
++static bool is_potentially_trustworthy(URL::URL const& url)
++{
++    return SecureContexts::is_url_potentially_trustworthy(url) == SecureContexts::Trustworthiness::PotentiallyTrustworthy;
++}
++
++GC::Ref<SealedField> SealedField::create(JS::Realm& realm, HTMLInputElement& element)
++{
++    return realm.create<SealedField>(element);
++}
++
++// The sealed-fields directive names autocomplete tokens; an <input> whose autocomplete attribute's last
++// token is listed gets a SealedField as if it were a <sealedinput>. Enforced policies only.
++bool SealedField::document_policy_seals_autocomplete_token(DOM::Document const& document, Utf16View token)
++{
++    if (token.is_empty())
++        return false;
++    for (auto const& policy : document.policy_container()->csp_list->policies()) {
++        if (policy->disposition() != ContentSecurityPolicy::Policy::Disposition::Enforce)
++            continue;
++        auto directive = policy->get_directive_by_name(Utf16View { directive_name });
++        if (!directive)
++            continue;
++        for (auto const& value : directive->value()) {
++            if (value.equals_ignoring_ascii_case(token))
++                return true;
++        }
++    }
++    return false;
++}
++
++GC::Ptr<SealedField> SealedField::create_if_policy_applies(JS::Realm& realm, HTMLInputElement& element)
++{
++    auto autocomplete = element.get_attribute(AttributeNames::autocomplete);
++    if (!autocomplete.has_value())
++        return nullptr;
++    // autocomplete may carry section/contact tokens before the field name; the field name is last.
++    auto tokens = autocomplete->utf16_view().trim_ascii_whitespace().split_view(u' ', SplitBehavior::Nothing);
++    if (tokens.is_empty())
++        return nullptr;
++    if (!document_policy_seals_autocomplete_token(element.document(), tokens.last()))
++        return nullptr;
++    return create(realm, element);
++}
++
++SealedField::SealedField(HTMLInputElement& element)
++    : m_element(element)
++{
++}
++
++void SealedField::visit_edges(Visitor& visitor)
++{
++    Base::visit_edges(visitor);
++    visitor.visit(m_element);
++    visitor.visit(m_fetch_controller);
++}
++
++void SealedField::fail(StringView reason)
++{
++    m_failed = true;
++    m_ready = false;
++    m_envelope = {};
++    dbgln("SealedField: {} for field '{}' in {}", reason, m_element->name().value_or({}), m_element->document().origin().serialize());
++
++    auto& realm = relevant_realm(*m_element);
++    DOM::CustomEventInit init {};
++    init.bubbles = true;
++    auto detail = JS::Object::create(realm, realm.intrinsics().object_prototype());
++    MUST(detail->create_data_property("reason"_utf16_fly_string, JS::PrimitiveString::create(realm.vm(), Utf16String::from_utf8(reason))));
++    init.detail = detail;
++    m_element->dispatch_event(DOM::CustomEvent::create("sealed-error"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
++}
++
++void SealedField::start()
++{
++    auto& document = m_element->document();
++
++    // 1. The document must be a secure context; loopback http counts, per the trustworthiness rules.
++    if (!is_potentially_trustworthy(document.url()))
++        return fail("insecure-context"sv);
++
++    // 2. The owning form and its action decide the recipient origin.
++    auto const* form = m_element->form();
++    if (!form)
++        return fail("no-form-action"sv);
++    auto action_attribute = form->get_attribute(AttributeNames::action);
++    if (!action_attribute.has_value() || action_attribute->utf16_view().trim_ascii_whitespace().is_empty())
++        return fail("no-form-action"sv);
++    auto action = document.encoding_parse_url(action_attribute->utf16_view());
++    if (!action.has_value())
++        return fail("no-form-action"sv);
++    if (!is_potentially_trustworthy(*action))
++        return fail("insecure-action"sv);
++
++    // 3. The slot binds the envelope to this origin, this action (origin + path), and this field name.
++    auto action_origin = action->origin().serialize();
++    auto slot = MUST(String::formatted("{}\n{}{}\n{}",
++        document.origin().serialize(),
++        action_origin,
++        action->serialize_path(),
++        m_element->name().value_or({})));
++    m_slot_aad = MUST(ByteBuffer::copy(slot.bytes()));
++
++    // 4. Fetch the recipient's key set: CORS mode, no credentials, from the action origin.
++    auto well_known_url = URL::Parser::basic_parse(MUST(String::formatted("{}{}", action_origin, well_known_path)));
++    if (!well_known_url.has_value())
++        return fail("recipient-unreachable"sv);
++
++    auto& realm = relevant_realm(*m_element);
++    auto request = Fetch::Infrastructure::Request::create(realm.vm());
++    request->set_url(well_known_url.release_value());
++    request->set_client(&document.relevant_settings_object());
++    request->set_mode(Fetch::Infrastructure::Request::Mode::CORS);
++    request->set_credentials_mode(Fetch::Infrastructure::Request::CredentialsMode::Omit);
++
++    Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
++    fetch_algorithms_input.process_response_consume_body = [this](auto response, auto body_bytes) {
++        m_fetch_controller = nullptr;
++        response = response->unsafe_response();
++        if (!Fetch::Infrastructure::is_ok_status(response->status()))
++            return fail("recipient-unreachable"sv);
++        body_bytes.visit(
++            [&](Core::ImmutableBytes const& bytes) { process_well_known(bytes.bytes()); },
++            [&](auto const&) { fail("recipient-unreachable"sv); });
++    };
++    m_fetch_controller = Fetch::Fetching::fetch(realm, *request, Fetch::Infrastructure::FetchAlgorithms::create(move(fetch_algorithms_input)));
++}
++
++// Parse { "keys": [ JWK, ... ] } and import the first usable EC P-256 encryption key.
++void SealedField::process_well_known(ReadonlyBytes body)
++{
++    auto json = JsonValue::from_string(StringView { body });
++    if (json.is_error() || !json.value().is_object())
++        return fail("recipient-invalid"sv);
++    auto keys = json.value().as_object().get_array("keys"sv);
++    if (!keys.has_value())
++        return fail("recipient-invalid"sv);
++
++    for (auto const& entry : keys->values()) {
++        if (!entry.is_object())
++            continue;
++        auto const& key = entry.as_object();
++        if (key.get_string("kty"sv) != "EC"sv || key.get_string("crv"sv) != "P-256"sv || key.get_string("use"sv) != "enc"sv)
++            continue;
++        auto kid = key.get_string("kid"sv);
++        auto x = key.get_string("x"sv);
++        auto y = key.get_string("y"sv);
++        if (!kid.has_value() || !x.has_value() || !y.has_value() || !is_valid_kid(*kid))
++            continue;
++        auto x_bytes = decode_base64url(*x);
++        auto y_bytes = decode_base64url(*y);
++        if (x_bytes.is_error() || y_bytes.is_error() || x_bytes.value().size() != 32 || y_bytes.value().size() != 32)
++            continue;
++        auto point = MUST(ByteBuffer::create_uninitialized(65));
++        point[0] = 0x04;
++        point.overwrite(1, x_bytes.value().data(), 32);
++        point.overwrite(33, y_bytes.value().data(), 32);
++        return become_ready(*kid, move(point));
++    }
++    fail("recipient-invalid"sv);
++}
++
++void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
++{
++    m_kid = move(kid);
++    m_recipient_public_key = move(recipient_public_key);
++    m_ready = true;
++    m_failed = false;
++    DOM::EventInit init {};
++    init.bubbles = true;
++    m_element->dispatch_event(DOM::Event::create("sealed-ready"_fly_string, init, HighResolutionTime::current_high_resolution_time(relevant_global_object(*m_element))));
++}
++
++void SealedField::freeze_constraints_if_needed()
++{
++    if (m_frozen)
++        return;
++    m_frozen = true;
++    m_constraints.required = m_element->has_attribute(AttributeNames::required);
++    m_constraints.pattern = m_element->get_attribute(AttributeNames::pattern);
++    if (auto value = m_element->get_attribute(AttributeNames::minlength); value.has_value())
++        m_constraints.minlength = value->utf16_view().to_number<u32>();
++    if (auto value = m_element->get_attribute(AttributeNames::maxlength); value.has_value())
++        m_constraints.maxlength = value->utf16_view().to_number<u32>();
++}
++
++// Same semantics as the polyfill's validateValue and HTML's compiled pattern regular expression: the
++// pattern must compile with the v flag on its own, then is matched anchored as ^(?:pattern)$. A pattern
++// that fails to compile is ignored.
++static bool matches_pattern(Utf16String const& pattern, Utf16View plaintext)
++{
++    regex::ECMAScriptCompileFlags compile_flags {};
++    compile_flags.unicode_sets = true;
++    if (regex::ECMAScriptRegex::compile(pattern.utf16_view(), compile_flags).is_error())
++        return true;
++
++    Utf16StringBuilder anchored_pattern_builder;
++    anchored_pattern_builder.append_ascii("^(?:"sv);
++    anchored_pattern_builder.append(pattern.utf16_view());
++    anchored_pattern_builder.append_ascii(")$"sv);
++    auto anchored_pattern = anchored_pattern_builder.to_string();
++    auto anchored = regex::ECMAScriptRegex::compile(anchored_pattern.utf16_view(), compile_flags);
++    if (anchored.is_error())
++        return true;
++    return anchored.value().test(plaintext, 0) == regex::MatchResult::Match;
++}
++
++bool SealedField::constraints_satisfied(Utf16View plaintext) const
++{
++    if (plaintext.is_empty())
++        return !m_constraints.required;
++    auto length = plaintext.length_in_code_points();
++    if (m_constraints.minlength.has_value() && length < *m_constraints.minlength)
++        return false;
++    if (m_constraints.maxlength.has_value() && length > *m_constraints.maxlength)
++        return false;
++    if (m_constraints.pattern.has_value() && !matches_pattern(*m_constraints.pattern, plaintext))
++        return false;
++    return true;
++}
++
++void SealedField::update_validity(Utf16View plaintext)
++{
++    Utf16String message = constraints_satisfied(plaintext) ? Utf16String {} : Utf16String::from_utf8(invalid_message);
++    m_element->set_custom_validity(message);
++}
++
++// Plaintext is length-prefixed and zero-padded to 32 bytes so the envelope reveals length only to a bucket.
++static ErrorOr<ByteBuffer> pad_plaintext(String const& utf8)
++{
++    auto bytes = utf8.bytes();
++    if (bytes.size() > 0xffff)
++        return Error::from_string_literal("sealed value exceeds 65535 bytes");
++    auto total = ((2 + bytes.size() + pad_block - 1) / pad_block) * pad_block;
++    auto out = TRY(ByteBuffer::create_zeroed(total));
++    out[0] = static_cast<u8>(bytes.size() >> 8);
++    out[1] = static_cast<u8>(bytes.size() & 0xff);
++    out.overwrite(2, bytes.data(), bytes.size());
++    return out;
++}
++
++void SealedField::reseal(Utf16View plaintext)
++{
++    if (!m_ready)
++        return;
++    if (!plaintext.is_empty())
++        freeze_constraints_if_needed();
++    update_validity(plaintext);
++    if (plaintext.is_empty()) {
++        m_envelope = {};
++        return;
++    }
++    auto padded = pad_plaintext(plaintext.to_utf8_but_should_be_ported_to_utf16());
++    if (padded.is_error())
++        return fail("recipient-invalid"sv);
++    auto sealed = ::Crypto::HPKE::seal(m_recipient_public_key, hpke_info.bytes(), m_slot_aad, padded.value());
++    if (sealed.is_error())
++        return fail("recipient-invalid"sv);
++    auto enc = MUST(encode_base64url(sealed.value().enc, AK::OmitPadding::Yes));
++    auto ciphertext = MUST(encode_base64url(sealed.value().ciphertext, AK::OmitPadding::Yes));
++    m_envelope = Utf16String::formatted("{}.{}.{}.{}", envelope_version, m_kid, enc, ciphertext);
++}
++
++void SealedField::reset()
++{
++    m_envelope = {};
++    m_frozen = false;
++    m_constraints = {};
++    Utf16String no_message;
++    m_element->set_custom_validity(no_message);
++}
++
++}
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+new file mode 100644
+index 00000000..c571f247
+--- /dev/null
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -0,0 +1,77 @@
++/*
++ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ *
++ * SPDX-License-Identifier: BSD-2-Clause
++ */
++
++/*
++ * The shared core behind <sealedinput> and the sealed-fields CSP directive: recipient discovery,
++ * HPKE sealing, the sealed1 envelope, frozen constraints, and one-bit validity.
++ * Behavior is specified by koschei docs/specs/explainer.md.
++ */
++
++#pragma once
++
++#include <AK/ByteBuffer.h>
++#include <AK/Optional.h>
++#include <AK/String.h>
++#include <AK/Utf16String.h>
++#include <LibGC/CellAllocator.h>
++#include <LibGC/Ptr.h>
++#include <LibJS/Heap/Cell.h>
++#include <LibWeb/Forward.h>
++
++namespace Web::HTML {
++
++class SealedField final : public GC::Cell {
++    GC_CELL(SealedField, GC::Cell);
++    GC_DECLARE_ALLOCATOR(SealedField);
++
++public:
++    static GC::Ref<SealedField> create(JS::Realm&, HTMLInputElement&);
++    static GC::Ptr<SealedField> create_if_policy_applies(JS::Realm&, HTMLInputElement&);
++    static bool document_policy_seals_autocomplete_token(DOM::Document const&, Utf16View token);
++
++    virtual ~SealedField() override = default;
++
++    void start();
++    void reseal(Utf16View plaintext);
++    void reset();
++
++    Utf16String const& envelope() const { return m_envelope; }
++    bool is_ready() const { return m_ready; }
++    bool has_failed() const { return m_failed; }
++
++private:
++    explicit SealedField(HTMLInputElement&);
++    virtual void visit_edges(Visitor&) override;
++
++    struct Constraints {
++        bool required { false };
++        Optional<Utf16String> pattern;
++        Optional<u32> minlength;
++        Optional<u32> maxlength;
++    };
++
++    void fail(StringView reason);
++    void become_ready(String kid, ByteBuffer recipient_public_key);
++    void process_well_known(ReadonlyBytes body);
++    void freeze_constraints_if_needed();
++    bool constraints_satisfied(Utf16View plaintext) const;
++    void update_validity(Utf16View plaintext);
++
++    GC::Ref<HTMLInputElement> m_element;
++    GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
++
++    String m_kid;
++    ByteBuffer m_recipient_public_key;
++    ByteBuffer m_slot_aad;
++    Utf16String m_envelope;
++
++    bool m_ready { false };
++    bool m_failed { false };
++    bool m_frozen { false };
++    Constraints m_constraints;
++};
++
++}
+-- 
+2.55.0
+

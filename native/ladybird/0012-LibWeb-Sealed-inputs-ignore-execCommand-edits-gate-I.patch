@@ -1,0 +1,430 @@
+From 587818b9962d87e0494fb2a5cf40113495fc146c Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Sat, 19 Sep 2026 19:40:06 -0500
+Subject: [PATCH 12/13] LibWeb: Sealed inputs ignore execCommand edits, gate
+ IME before ready, re-derive the slot on rename or retarget; LibCrypto:
+ negative HPKE tests
+
+---
+ Libraries/LibCrypto/HPKE.cpp                  |  1 -
+ Libraries/LibWeb/Editing/ExecCommand.cpp      | 28 +++++++++++++++--
+ Libraries/LibWeb/HTML/FormAssociatedElement.h |  3 ++
+ Libraries/LibWeb/HTML/HTMLFormElement.cpp     |  5 +++
+ Libraries/LibWeb/HTML/HTMLInputElement.cpp    | 20 ++++++++++--
+ Libraries/LibWeb/HTML/HTMLInputElement.h      |  1 +
+ .../LibWeb/HTML/HTMLSealedInputElement.cpp    |  1 -
+ Libraries/LibWeb/HTML/LocalNavigable.cpp      | 17 ++++++++++
+ Libraries/LibWeb/HTML/SealedField.cpp         | 11 ++++---
+ Libraries/LibWeb/HTML/SealedField.h           |  4 +--
+ Tests/LibCrypto/TestHPKE.cpp                  | 31 +++++++++++++++++++
+ .../expected/HTML/sealedinput-envelope.txt    |  5 +++
+ .../Text/input/HTML/sealedinput-envelope.html | 29 +++++++++++++++++
+ 13 files changed, 142 insertions(+), 14 deletions(-)
+
+diff --git a/Libraries/LibCrypto/HPKE.cpp b/Libraries/LibCrypto/HPKE.cpp
+index 316fad0d..db0b01c0 100644
+--- a/Libraries/LibCrypto/HPKE.cpp
++++ b/Libraries/LibCrypto/HPKE.cpp
+@@ -4,7 +4,6 @@
+  * SPDX-License-Identifier: BSD-2-Clause
+  */
+ 
+-#include <AK/Random.h>
+ #include <LibCrypto/Authentication/HMAC.h>
+ #include <LibCrypto/Cipher/AES.h>
+ #include <LibCrypto/Curves/SECPxxxr1.h>
+diff --git a/Libraries/LibWeb/Editing/ExecCommand.cpp b/Libraries/LibWeb/Editing/ExecCommand.cpp
+index 57f5c055..13007038 100644
+--- a/Libraries/LibWeb/Editing/ExecCommand.cpp
++++ b/Libraries/LibWeb/Editing/ExecCommand.cpp
+@@ -10,12 +10,14 @@
+ #include <LibWeb/DOM/Document.h>
+ #include <LibWeb/DOM/Event.h>
+ #include <LibWeb/DOM/Range.h>
++#include <LibWeb/DOM/ShadowRoot.h>
+ #include <LibWeb/DOM/Text.h>
+ #include <LibWeb/Editing/CommandNames.h>
+ #include <LibWeb/Editing/Commands.h>
+ #include <LibWeb/Editing/EditingHistory.h>
+ #include <LibWeb/Editing/Internal/Algorithms.h>
+ #include <LibWeb/Editing/VisiblePosition.h>
++#include <LibWeb/HTML/FormAssociatedElement.h>
+ #include <LibWeb/HTML/HTMLAnchorElement.h>
+ #include <LibWeb/HTML/HTMLLIElement.h>
+ #include <LibWeb/HTML/Scripting/Environments.h>
+@@ -307,13 +309,22 @@ WebIDL::ExceptionOr<bool> Document::query_command_enabled(Utf16FlyString const&
+     // INTEROP: The spec lists undo and redo among the always-enabled miscellaneous commands, but in Chromium
+     //          queryCommandEnabled("undo") is true only when there is a step to undo, and execCommand("undo") on an
+     //          empty history returns false. Redo behaves symmetrically.
++    // A sealed <input> (see HTML::SealedField) records its edits so the user can undo them from the keyboard, but
++    // script must not replay them: execCommand("undo") followed by a validity read is a per-character oracle on the
++    // user's value. The keyboard shortcut path (Editing::perform_history_action) does not come through here.
++    auto step_edits_sealed_text_control = [](GC::Ptr<Editing::UndoStep> step) {
++        if (!step)
++            return false;
++        auto* control = dynamic_cast<HTML::FormAssociatedTextControlElement*>(step->editing_host().ptr());
++        return control && control->is_sealed_text_control();
++    };
+     if (command.equals_ignoring_ascii_case(Editing::CommandNames::undo)) {
+         auto history = editing_history_if_exists();
+-        return history && history->can_undo();
++        return history && history->can_undo() && !step_edits_sealed_text_control(history->next_undo_step());
+     }
+     if (command.equals_ignoring_ascii_case(Editing::CommandNames::redo)) {
+         auto history = editing_history_if_exists();
+-        return history && history->can_redo();
++        return history && history->can_redo() && !step_edits_sealed_text_control(history->next_redo_step());
+     }
+ 
+     // AD-HOC: selectAll requires a selection object to exist.
+@@ -325,6 +336,19 @@ WebIDL::ExceptionOr<bool> Document::query_command_enabled(Utf16FlyString const&
+     if (!active_range)
+         return false;
+ 
++    // A range inside a sealed <input>'s shadow tree never enables an editing command. Today the shadow tree is not
++    // editable anyway; this keeps execCommand a no-op for sealed fields even if that changes.
++    auto range_is_inside_sealed_text_control = [](DOM::Node& node) {
++        auto* shadow_root = as_if<ShadowRoot>(node.root());
++        if (!shadow_root)
++            return false;
++        auto* control = dynamic_cast<HTML::FormAssociatedTextControlElement*>(shadow_root->host());
++        return control && control->is_sealed_text_control();
++    };
++    if (range_is_inside_sealed_text_control(*active_range->start_container())
++        || range_is_inside_sealed_text_control(*active_range->end_container()))
++        return false;
++
+     // its start node is either editable or an editing host,
+     auto start_node = active_range->start_container();
+     if (!start_node->is_editable_or_editing_host())
+diff --git a/Libraries/LibWeb/HTML/FormAssociatedElement.h b/Libraries/LibWeb/HTML/FormAssociatedElement.h
+index 74ce5706..f6783cbf 100644
+--- a/Libraries/LibWeb/HTML/FormAssociatedElement.h
++++ b/Libraries/LibWeb/HTML/FormAssociatedElement.h
+@@ -56,6 +56,9 @@ public:
+ 
+     static void reposition_associated_elements_after_move(Badge<DOM::Element>, DOM::Node& moved_subtree_root);
+ 
++    // The owning form's action attribute changed. A sealed input binds its slot to that action.
++    virtual void form_action_changed(Badge<HTMLFormElement>) { }
++
+     // https://html.spec.whatwg.org/multipage/forms.html#category-listed
+     virtual bool is_listed() const;
+ 
+diff --git a/Libraries/LibWeb/HTML/HTMLFormElement.cpp b/Libraries/LibWeb/HTML/HTMLFormElement.cpp
+index 7ca12efd..5f03ef62 100644
+--- a/Libraries/LibWeb/HTML/HTMLFormElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLFormElement.cpp
+@@ -786,6 +786,11 @@ void HTMLFormElement::attribute_changed(Utf16FlyString const& name, Optional<Utf
+     if (name == HTML::AttributeNames::rel) {
+         if (m_rel_list)
+             m_rel_list->associated_attribute_changed(value.has_value() ? value->utf16_view() : u""sv);
++    } else if (name == HTML::AttributeNames::action && old_value != value) {
++        // Sealed inputs re-derive their slot from the action; the hook may queue tasks, so iterate over a copy.
++        GC::RootVector<GC::Ref<HTMLElement>> associated_elements_copy { m_associated_elements_in_tree_order };
++        for (auto element : associated_elements_copy)
++            as<FormAssociatedElement>(*element).form_action_changed({});
+     }
+ }
+ 
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.cpp b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+index bbb6b620..426209c2 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.cpp
+@@ -1740,13 +1740,18 @@ void HTMLInputElement::form_associated_element_attribute_changed(Utf16FlyString
+             set_needs_layout_update(DOM::SetNeedsLayoutReason::DefaultPreferredSizeAttributeChange);
+     } else if (name == HTML::AttributeNames::name) {
+         update_radio_button_group_registration();
++        // The slot AAD is bound to the field name; a rename re-derives it from scratch.
++        if (m_sealed_field && old_value != value) {
++            m_sealed_field->detach();
++            queue_sealed_field_start();
++        }
+     } else if (name == HTML::AttributeNames::required) {
+         if (m_radio_button_group_registry && old_value.has_value() != value.has_value())
+             m_radio_button_group_registry->required_state_changed(m_radio_button_group_name, *this);
+     } else if (name == HTML::AttributeNames::autocomplete) {
+         // The sealed-fields directive is re-evaluated whenever the field name can change; a field never un-seals.
+         if (!m_sealed_field && is_connected()) {
+-            m_sealed_field = SealedField::create_if_policy_applies(HTML::relevant_realm(*this), *this);
++            m_sealed_field = SealedField::create_if_policy_applies(*this);
+             queue_sealed_field_start();
+         }
+     }
+@@ -2305,7 +2310,7 @@ void HTMLInputElement::form_associated_element_was_inserted()
+ 
+     // The sealed-fields CSP directive can turn an ordinary <input> into a sealed field by autocomplete token.
+     if (!m_sealed_field)
+-        m_sealed_field = SealedField::create_if_policy_applies(HTML::relevant_realm(*this), *this);
++        m_sealed_field = SealedField::create_if_policy_applies(*this);
+ 
+     // Removal detaches the field (key, slot and envelope are dropped), so reinsertion re-runs discovery here.
+     queue_sealed_field_start();
+@@ -2313,7 +2318,7 @@ void HTMLInputElement::form_associated_element_was_inserted()
+ 
+ void HTMLInputElement::attach_sealed_field()
+ {
+-    m_sealed_field = SealedField::create(HTML::relevant_realm(*this), *this);
++    m_sealed_field = SealedField::create(*this);
+ }
+ 
+ // Discovery is queued so that a parser-created element can attach sealed-error listeners before a synchronous
+@@ -2361,6 +2366,15 @@ void HTMLInputElement::form_associated_element_form_owner_changed()
+     }
+ }
+ 
++void HTMLInputElement::form_action_changed(Badge<HTMLFormElement>)
++{
++    // The owner is unchanged but its action is not; the slot AAD must follow it.
++    if (m_sealed_field) {
++        m_sealed_field->detach();
++        queue_sealed_field_start();
++    }
++}
++
+ EventResult HTMLInputElement::handle_return_key(Utf16FlyString const&)
+ {
+     if (auto* form = this->form())
+diff --git a/Libraries/LibWeb/HTML/HTMLInputElement.h b/Libraries/LibWeb/HTML/HTMLInputElement.h
+index 518fe7f8..d7d7d4c1 100644
+--- a/Libraries/LibWeb/HTML/HTMLInputElement.h
++++ b/Libraries/LibWeb/HTML/HTMLInputElement.h
+@@ -210,6 +210,7 @@ public:
+     virtual void form_associated_element_was_removed(DOM::Node*) override;
+     virtual void form_associated_element_was_moved(GC::Ptr<DOM::Node>) override;
+     virtual void form_associated_element_form_owner_changed() override;
++    virtual void form_action_changed(Badge<HTMLFormElement>) override;
+     virtual void form_associated_element_attribute_changed(Utf16FlyString const& name, Optional<Utf16String> const& old_value, Optional<Utf16String> const& value, Optional<Utf16FlyString> const& namespace_) override;
+ 
+     virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) const override;
+diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+index 1598961a..11a91ab0 100644
+--- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
++++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
+@@ -6,7 +6,6 @@
+ 
+ #include <LibWeb/HTML/AttributeNames.h>
+ #include <LibWeb/HTML/HTMLSealedInputElement.h>
+-#include <LibWeb/HTML/SealedField.h>
+ 
+ namespace Web::HTML {
+ 
+diff --git a/Libraries/LibWeb/HTML/LocalNavigable.cpp b/Libraries/LibWeb/HTML/LocalNavigable.cpp
+index 3df271ed..12e4451f 100644
+--- a/Libraries/LibWeb/HTML/LocalNavigable.cpp
++++ b/Libraries/LibWeb/HTML/LocalNavigable.cpp
+@@ -6006,6 +6006,17 @@ static bool focused_area_is_sealed_input(DOM::Document& document)
+     return input && input->sealed_field();
+ }
+ 
++// Composition text is dropped until the recipient key has arrived, like keyboard and paste input (see EventHandler):
++// text that reaches the field before it can be sealed would sit unsealed in the value.
++static bool sealed_input_target_is_not_ready(InputEventsTarget& target)
++{
++    auto* text_control = as_if<HTML::FormAssociatedTextControlElement>(target);
++    if (!text_control)
++        return false;
++    auto* input = as_if<HTML::HTMLInputElement>(text_control->text_control_to_html_element());
++    return input && input->sealed_field() && !input->sealed_field()->is_ready();
++}
++
+ bool LocalNavigable::dispatch_composition_event(Utf16FlyString const& event_name, Utf16View data)
+ {
+     // https://w3c.github.io/uievents/#events-compositionevents
+@@ -6286,6 +6297,8 @@ void LocalNavigable::replace_input_method_marked_text(Utf16View text)
+ 
+     // The DOM update, which fires the matching input event (inputType insertCompositionText, isComposing true) from the
+     // editing command for an editing host, or from the text control's value change for a form control.
++    if (sealed_input_target_is_not_ready(*target))
++        return;
+     target->handle_insert(UIEvents::InputTypes::insertCompositionText, text);
+ 
+     // The first update over a non-collapsed selection had no pre-insert caret to remember as the marked-text start.
+@@ -6342,6 +6355,8 @@ bool LocalNavigable::apply_input_method_commit_replacement(Utf16View text, i32 r
+         if (!m_input_method_composition_node) {
+             if (!dispatch_input_method_replacement_events(*document, target, text))
+                 return true;
++            if (sealed_input_target_is_not_ready(*target))
++                return true;
+             target->handle_insert(UIEvents::InputTypes::insertCompositionText, text);
+             return true;
+         }
+@@ -6376,6 +6391,8 @@ bool LocalNavigable::apply_input_method_commit_replacement(Utf16View text, i32 r
+     //          kInsertCompositionText) — so it carries inputType insertCompositionText, like every other IME insertion.
+     if (!dispatch_input_method_replacement_events(*document, target, text))
+         return true;
++    if (sealed_input_target_is_not_ready(*target))
++        return true;
+     target->handle_insert(UIEvents::InputTypes::insertCompositionText, text);
+     return true;
+ }
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index a4d422b0..e4986522 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -13,7 +13,6 @@
+ #include <LibCrypto/HPKE.h>
+ #include <LibJS/Runtime/Object.h>
+ #include <LibJS/Runtime/PrimitiveString.h>
+-#include <LibJS/Runtime/Realm.h>
+ #include <LibRegex/ECMAScriptRegex.h>
+ #include <LibURL/Parser.h>
+ #include <LibWeb/ContentSecurityPolicy/BlockingAlgorithms.h>
+@@ -68,9 +67,9 @@ static bool is_potentially_trustworthy(URL::URL const& url)
+     return SecureContexts::is_url_potentially_trustworthy(url) == SecureContexts::Trustworthiness::PotentiallyTrustworthy;
+ }
+ 
+-GC::Ref<SealedField> SealedField::create(JS::Realm& realm, HTMLInputElement& element)
++GC::Ref<SealedField> SealedField::create(HTMLInputElement& element)
+ {
+-    return realm.create<SealedField>(element);
++    return relevant_realm(element).create<SealedField>(element);
+ }
+ 
+ // The sealed-fields directive names autofill field names; an <input> whose parsed autocomplete field name is listed
+@@ -93,7 +92,7 @@ bool SealedField::document_policy_seals_autocomplete_token(DOM::Document const&
+     return false;
+ }
+ 
+-GC::Ptr<SealedField> SealedField::create_if_policy_applies(JS::Realm& realm, HTMLInputElement& element)
++GC::Ptr<SealedField> SealedField::create_if_policy_applies(HTMLInputElement& element)
+ {
+     if (!element.has_attribute(AttributeNames::autocomplete))
+         return nullptr;
+@@ -110,7 +109,7 @@ GC::Ptr<SealedField> SealedField::create_if_policy_applies(JS::Realm& realm, HTM
+         return nullptr;
+     if (!document_policy_seals_autocomplete_token(element.document(), field_name.utf16_view()))
+         return nullptr;
+-    return create(realm, element);
++    return create(element);
+ }
+ 
+ SealedField::SealedField(HTMLInputElement& element)
+@@ -227,6 +226,7 @@ void SealedField::start()
+ 
+     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
+     fetch_algorithms_input.process_response_consume_body = [this, fetch_generation](auto response, auto body_bytes) {
++        // Do not null the controller here: it belongs to a newer start().
+         if (fetch_generation != m_fetch_generation)
+             return;
+         m_fetch_controller = nullptr;
+@@ -241,6 +241,7 @@ void SealedField::start()
+             [&](Core::ImmutableBytes const& bytes) { process_well_known(bytes.bytes()); },
+             [&](auto const&) { fail("recipient-unreachable"sv); });
+     };
++    // is_discovering() relies on the response callback never running synchronously here.
+     m_fetch_controller = Fetch::Fetching::fetch(realm, *request, Fetch::Infrastructure::FetchAlgorithms::create(move(fetch_algorithms_input)));
+ }
+ 
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index b2842c35..9b71975c 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -28,8 +28,8 @@ class SealedField final : public GC::Cell {
+     GC_DECLARE_ALLOCATOR(SealedField);
+ 
+ public:
+-    static GC::Ref<SealedField> create(JS::Realm&, HTMLInputElement&);
+-    static GC::Ptr<SealedField> create_if_policy_applies(JS::Realm&, HTMLInputElement&);
++    static GC::Ref<SealedField> create(HTMLInputElement&);
++    static GC::Ptr<SealedField> create_if_policy_applies(HTMLInputElement&);
+     static bool document_policy_seals_autocomplete_token(DOM::Document const&, Utf16View token);
+ 
+     virtual ~SealedField() override = default;
+diff --git a/Tests/LibCrypto/TestHPKE.cpp b/Tests/LibCrypto/TestHPKE.cpp
+index 51c339b8..6c11d7b6 100644
+--- a/Tests/LibCrypto/TestHPKE.cpp
++++ b/Tests/LibCrypto/TestHPKE.cpp
+@@ -65,3 +65,34 @@ TEST_CASE(round_trip_with_fresh_keys)
+     auto opened = TRY_OR_FAIL(Crypto::HPKE::open(kp.private_key, kp.public_key, sealed.enc, "sealed-input/1"sv.bytes(), "slot"sv.bytes(), sealed.ciphertext));
+     EXPECT_EQ(opened.bytes(), "hello"sv.bytes());
+ }
++
++TEST_CASE(seal_rejects_off_curve_recipient_key)
++{
++    // Flip one byte of pkRm's y coordinate: still 65 bytes, still an 0x04 prefix, no longer on P-256.
++    auto off_curve = MUST(ByteBuffer::copy(pkRm.bytes()));
++    off_curve[64] ^= 0x01;
++    EXPECT(Crypto::HPKE::seal(off_curve, info, aad, pt).is_error());
++}
++
++TEST_CASE(open_rejects_wrong_length_enc)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::derive_key_pair(ikmR));
++    auto short_enc = pkEm.bytes().slice(0, 64);
++    EXPECT(Crypto::HPKE::open(kp.private_key, pkRm, short_enc, info, aad, ct).is_error());
++}
++
++TEST_CASE(open_rejects_ciphertext_shorter_than_tag)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::derive_key_pair(ikmR));
++    auto truncated = ct.bytes().slice(0, 15);
++    EXPECT(Crypto::HPKE::open(kp.private_key, pkRm, pkEm, info, aad, truncated).is_error());
++}
++
++TEST_CASE(round_trip_of_empty_plaintext)
++{
++    auto kp = TRY_OR_FAIL(Crypto::HPKE::generate_key_pair());
++    auto sealed = TRY_OR_FAIL(Crypto::HPKE::seal(kp.public_key, info, aad, ReadonlyBytes {}));
++    EXPECT_EQ(sealed.ciphertext.size(), 16u);
++    auto opened = TRY_OR_FAIL(Crypto::HPKE::open(kp.private_key, kp.public_key, sealed.enc, info, aad, sealed.ciphertext));
++    EXPECT(opened.is_empty());
++}
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+index 329c7180..36938262 100644
+--- a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
++++ b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+@@ -17,5 +17,10 @@ clone-value=""
+ type-after-change=text value-attr-after-type-change=null
+ paste-events=0 value-changed-after-paste=true
+ value-after-reinsert="" valid-after-reinsert=false
++execCommand-insert=false execCommand-delete=false execCommand-undo=false queryCommandEnabled-undo=false value-changed-by-execCommand=false
++keyboard-undo-changed-value=true value-after-keyboard-undo=""
++value-after-rename="" name-after-rename=ssn2
++ready-after-form-action-change=true
++restored name=ssn action=/submit
+ markup-type-ignored=text
+ value-after-reset="" valid-after-reset=false
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+index 84e81b9f..ad624407 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+@@ -71,6 +71,35 @@
+         await readyAgain;
+         println(`value-after-reinsert=${JSON.stringify(el.value)} valid-after-reinsert=${el.checkValidity()}`);
+ 
++        // execCommand is a script write: insert, delete and the history commands are all inert for a sealed field.
++        el.focus();
++        internals.sendText(el, "123-45-6789");
++        const beforeExec = el.value;
++        const execInsert = document.execCommand("insertText", false, "9");
++        const execDelete = document.execCommand("delete");
++        const execUndo = document.execCommand("undo");
++        println(`execCommand-insert=${execInsert} execCommand-delete=${execDelete} execCommand-undo=${execUndo} queryCommandEnabled-undo=${document.queryCommandEnabled("undo")} value-changed-by-execCommand=${el.value !== beforeExec}`);
++        // The user's own undo shortcut is not a script write and still reverts the typed run.
++        internals.sendKey(el, "Z", internals.MOD_CTRL | internals.MOD_SUPER);
++        println(`keyboard-undo-changed-value=${el.value !== beforeExec} value-after-keyboard-undo=${JSON.stringify(el.value)}`);
++
++        // A rename or a retarget re-derives the slot: the typed value is dropped and discovery runs again.
++        const readyAfterRename = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        el.setAttribute("name", "ssn2");
++        await readyAfterRename;
++        println(`value-after-rename=${JSON.stringify(el.value)} name-after-rename=${el.name}`);
++        const readyAfterRetarget = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        form.setAttribute("action", "/submit-2");
++        await readyAfterRetarget;
++        println(`ready-after-form-action-change=true`);
++        const readyAfterRestoreName = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        el.setAttribute("name", "ssn");
++        await readyAfterRestoreName;
++        const readyAfterRestoreAction = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        form.setAttribute("action", "/submit");
++        await readyAfterRestoreAction;
++        println(`restored name=${el.name} action=${form.getAttribute("action")}`);
++
+         println(`markup-type-ignored=${form.elements.namedItem("pre").type}`);
+ 
+         form.reset();
+-- 
+2.55.0
+

@@ -1,0 +1,162 @@
+From 3180faf71b998df0c7555f4dbfefdd15022f82fe Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Sat, 19 Sep 2026 20:01:23 -0500
+Subject: [PATCH 13/13] LibWeb: Sealed inputs forget their editing history on
+ detach
+
+---
+ Libraries/LibWeb/Editing/EditingHistory.cpp   | 14 +++++++++++++
+ Libraries/LibWeb/Editing/EditingHistory.h     |  3 +++
+ Libraries/LibWeb/HTML/SealedField.cpp         | 10 +++++++++
+ Libraries/LibWeb/HTML/SealedField.h           |  1 +
+ .../expected/HTML/sealedinput-envelope.txt    |  3 +++
+ .../Text/input/HTML/sealedinput-envelope.html | 21 ++++++++++++++++++-
+ 6 files changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/Libraries/LibWeb/Editing/EditingHistory.cpp b/Libraries/LibWeb/Editing/EditingHistory.cpp
+index 5b57cc88..311f67cb 100644
+--- a/Libraries/LibWeb/Editing/EditingHistory.cpp
++++ b/Libraries/LibWeb/Editing/EditingHistory.cpp
+@@ -443,6 +443,20 @@ void EditingHistory::prune_steps_for_disconnected_hosts()
+     m_redo_stack.remove_all_matching([](GC::Ref<UndoStep> const& step) { return !step->editing_host()->is_connected(); });
+ }
+ 
++// A sealed field (see HTML::SealedField) forgets its recipient without leaving the document; the plaintext its
++// steps hold must go with it, or the user's next undo would reseal old text under the new slot and key.
++void EditingHistory::forget_steps_for_editing_host(DOM::Document& document, DOM::Node const& editing_host)
++{
++    auto owned_by_host = [&](GC::Ptr<UndoStep> const& step) { return step && step->editing_host().ptr() == &editing_host; };
++    m_undo_stack.remove_all_matching([&](GC::Ref<UndoStep> const& step) { return owned_by_host(step); });
++    m_redo_stack.remove_all_matching([&](GC::Ref<UndoStep> const& step) { return owned_by_host(step); });
++    if (owned_by_host(m_open_step))
++        m_open_step = nullptr;
++    if (owned_by_host(m_undo_step_being_recorded))
++        m_undo_step_being_recorded = nullptr;
++    notify_state_if_changed(document);
++}
++
+ void EditingHistory::restore_selection(DOM::Document& document, SelectionSnapshot const& snapshot)
+ {
+     // Text controls have their own selection instead of a document selection.
+diff --git a/Libraries/LibWeb/Editing/EditingHistory.h b/Libraries/LibWeb/Editing/EditingHistory.h
+index b3c79dc2..2c194a46 100644
+--- a/Libraries/LibWeb/Editing/EditingHistory.h
++++ b/Libraries/LibWeb/Editing/EditingHistory.h
+@@ -175,6 +175,9 @@ public:
+     GC::Ptr<UndoStep> next_undo_step();
+     GC::Ptr<UndoStep> next_redo_step();
+ 
++    // Drops every step owned by this editing host, whether or not it is connected.
++    void forget_steps_for_editing_host(DOM::Document&, DOM::Node const& editing_host);
++
+     // Called whenever the document selection changes; ends typing coalescence unless the change
+     // came from an editing command or from history application itself.
+     void selection_changed();
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index e4986522..df22d9f3 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -22,6 +22,7 @@
+ #include <LibWeb/DOM/CustomEvent.h>
+ #include <LibWeb/DOM/Document.h>
+ #include <LibWeb/DOM/Event.h>
++#include <LibWeb/Editing/EditingHistory.h>
+ #include <LibWeb/Fetch/Fetching/Fetching.h>
+ #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+ #include <LibWeb/Fetch/Infrastructure/FetchController.h>
+@@ -424,6 +425,7 @@ void SealedField::reseal(Utf16View plaintext)
+ // resealed against the live attributes. The fail-closed message stays while the field is not ready.
+ void SealedField::reset()
+ {
++    forget_editing_history();
+     m_envelope = {};
+     m_frozen = false;
+     m_constraints = {};
+@@ -448,8 +450,16 @@ void SealedField::detach()
+     m_constraints = {};
+     // The plaintext leaves with the recipient: keeping it would let remove/reinsert probe a new pattern against the
+     // old text, or reseal it to whichever form the element lands in next. Reinsertion starts empty.
++    forget_editing_history();
+     MUST(m_element->set_relevant_value({}));
+     set_element_custom_validity(unavailable_message);
+ }
+ 
++// The undo and redo stacks hold the typed text; an undo after the slot or the constraints changed would replay it.
++void SealedField::forget_editing_history()
++{
++    if (auto history = m_element->document().editing_history_if_exists())
++        history->forget_steps_for_editing_host(m_element->document(), *m_element);
++}
++
+ }
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index 9b71975c..6f7dbd84 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -64,6 +64,7 @@ private:
+     bool constraints_satisfied(Utf16View plaintext) const;
+     void update_validity(Utf16View plaintext);
+     void set_element_custom_validity(StringView message);
++    void forget_editing_history();
+ 
+     GC::Ref<HTMLInputElement> m_element;
+     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
+diff --git a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+index 36938262..c7af6fa7 100644
+--- a/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
++++ b/Tests/LibWeb/Text/expected/HTML/sealedinput-envelope.txt
+@@ -19,8 +19,11 @@ paste-events=0 value-changed-after-paste=true
+ value-after-reinsert="" valid-after-reinsert=false
+ execCommand-insert=false execCommand-delete=false execCommand-undo=false queryCommandEnabled-undo=false value-changed-by-execCommand=false
+ keyboard-undo-changed-value=true value-after-keyboard-undo=""
++execCommand-redo=false queryCommandEnabled-redo=false value-after-script-redo=""
+ value-after-rename="" name-after-rename=ssn2
+ ready-after-form-action-change=true
+ restored name=ssn action=/submit
++value-after-undo-post-rename="" valid-after-undo-post-rename=false
++value-after-redo-post-rename=""
+ markup-type-ignored=text
+ value-after-reset="" valid-after-reset=false
+diff --git a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+index ad624407..df56b5ae 100644
+--- a/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
++++ b/Tests/LibWeb/Text/input/HTML/sealedinput-envelope.html
+@@ -80,8 +80,12 @@
+         const execUndo = document.execCommand("undo");
+         println(`execCommand-insert=${execInsert} execCommand-delete=${execDelete} execCommand-undo=${execUndo} queryCommandEnabled-undo=${document.queryCommandEnabled("undo")} value-changed-by-execCommand=${el.value !== beforeExec}`);
+         // The user's own undo shortcut is not a script write and still reverts the typed run.
+-        internals.sendKey(el, "Z", internals.MOD_CTRL | internals.MOD_SUPER);
++        const modUndo = internals.MOD_CTRL | internals.MOD_SUPER;
++        internals.sendKey(el, "Z", modUndo);
+         println(`keyboard-undo-changed-value=${el.value !== beforeExec} value-after-keyboard-undo=${JSON.stringify(el.value)}`);
++        // The undone run now heads the redo stack; script redo is just as inert.
++        const execRedo = document.execCommand("redo");
++        println(`execCommand-redo=${execRedo} queryCommandEnabled-redo=${document.queryCommandEnabled("redo")} value-after-script-redo=${JSON.stringify(el.value)}`);
+ 
+         // A rename or a retarget re-derives the slot: the typed value is dropped and discovery runs again.
+         const readyAfterRename = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
+@@ -100,6 +104,21 @@
+         await readyAfterRestoreAction;
+         println(`restored name=${el.name} action=${form.getAttribute("action")}`);
+ 
++        // Undo does not cross a rename: the typed text and its deletion leave the editing history with the old slot,
++        // so the user's own undo cannot reseal old plaintext under the new slot and key.
++        internals.sendText(el, "987");
++        internals.sendKey(el, "Backspace", 0, 3);
++        const readyAfterSecondRename = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        el.setAttribute("name", "ssn3");
++        await readyAfterSecondRename;
++        internals.sendKey(el, "Z", modUndo);
++        println(`value-after-undo-post-rename=${JSON.stringify(el.value)} valid-after-undo-post-rename=${el.checkValidity()}`);
++        internals.sendKey(el, "Z", modUndo | internals.MOD_SHIFT);
++        println(`value-after-redo-post-rename=${JSON.stringify(el.value)}`);
++        const readyAfterThirdRename = new Promise(r => el.addEventListener("sealed-ready", r, { once: true }));
++        el.setAttribute("name", "ssn");
++        await readyAfterThirdRename;
++
+         println(`markup-type-ignored=${form.elements.namedItem("pre").type}`);
+ 
+         form.reset();
+-- 
+2.55.0
+

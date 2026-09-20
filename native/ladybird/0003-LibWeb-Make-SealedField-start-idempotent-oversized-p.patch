@@ -1,0 +1,183 @@
+From 14382582abdb99a38c00aae24129e51bc14f3168 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matthew.declercq@gmail.com>
+Date: Fri, 18 Sep 2026 21:24:53 -0500
+Subject: [PATCH 03/13] LibWeb: Make SealedField::start idempotent; oversized
+ plaintext is a constraint, not a recipient failure
+
+---
+ Libraries/LibWeb/HTML/SealedField.cpp | 74 ++++++++++++++++++++++-----
+ Libraries/LibWeb/HTML/SealedField.h   |  1 +
+ 2 files changed, 61 insertions(+), 14 deletions(-)
+
+diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
+index 116b8070..57ecd84d 100644
+--- a/Libraries/LibWeb/HTML/SealedField.cpp
++++ b/Libraries/LibWeb/HTML/SealedField.cpp
+@@ -46,6 +46,7 @@ static constexpr StringView well_known_path = "/.well-known/sealed-input"sv;
+ static constexpr StringView invalid_message = "Please match the requested format."sv;
+ static constexpr StringView directive_name = "sealed-fields"sv;
+ static constexpr size_t pad_block = 32;
++static constexpr size_t max_plaintext_bytes = 0xffff;
+ 
+ static bool is_valid_kid(StringView kid)
+ {
+@@ -88,16 +89,33 @@ bool SealedField::document_policy_seals_autocomplete_token(DOM::Document const&
+     return false;
+ }
+ 
++// HTML "ASCII whitespace": TAB, LF, FF, CR, SPACE (not VT).
++static bool is_html_ascii_whitespace(char16_t code_unit)
++{
++    return code_unit == u' ' || code_unit == u'\t' || code_unit == u'\n' || code_unit == u'\f' || code_unit == u'\r';
++}
++
++static Utf16View last_ascii_whitespace_token(Utf16View input)
++{
++    size_t end = input.length_in_code_units();
++    while (end > 0 && is_html_ascii_whitespace(input.code_unit_at(end - 1)))
++        --end;
++    size_t start = end;
++    while (start > 0 && !is_html_ascii_whitespace(input.code_unit_at(start - 1)))
++        --start;
++    return input.substring_view(start, end - start);
++}
++
+ GC::Ptr<SealedField> SealedField::create_if_policy_applies(JS::Realm& realm, HTMLInputElement& element)
+ {
+     auto autocomplete = element.get_attribute(AttributeNames::autocomplete);
+     if (!autocomplete.has_value())
+         return nullptr;
+     // autocomplete may carry section/contact tokens before the field name; the field name is last.
+-    auto tokens = autocomplete->utf16_view().trim_ascii_whitespace().split_view(u' ', SplitBehavior::Nothing);
+-    if (tokens.is_empty())
++    auto token = last_ascii_whitespace_token(autocomplete->utf16_view());
++    if (token.is_empty())
+         return nullptr;
+-    if (!document_policy_seals_autocomplete_token(element.document(), tokens.last()))
++    if (!document_policy_seals_autocomplete_token(element.document(), token))
+         return nullptr;
+     return create(realm, element);
+ }
+@@ -119,6 +137,8 @@ void SealedField::fail(StringView reason)
+     m_failed = true;
+     m_ready = false;
+     m_envelope = {};
++    Utf16String no_message;
++    m_element->set_custom_validity(no_message);
+     dbgln("SealedField: {} for field '{}' in {}", reason, m_element->name().value_or({}), m_element->document().origin().serialize());
+ 
+     auto& realm = relevant_realm(*m_element);
+@@ -132,6 +152,16 @@ void SealedField::fail(StringView reason)
+ 
+ void SealedField::start()
+ {
++    // Fail closed while re-discovering: a stale key must never be paired with a fresh slot AAD, and a
++    // fetch from an earlier start() must not be able to complete into this one.
++    auto fetch_generation = ++m_fetch_generation;
++    if (m_fetch_controller) {
++        m_fetch_controller->stop_fetch();
++        m_fetch_controller = nullptr;
++    }
++    m_ready = false;
++    m_envelope = {};
++
+     auto& document = m_element->document();
+ 
+     // 1. The document must be a secure context; loopback http counts, per the trustworthiness rules.
+@@ -150,6 +180,9 @@ void SealedField::start()
+         return fail("no-form-action"sv);
+     if (!is_potentially_trustworthy(*action))
+         return fail("insecure-action"sv);
++    // file:, about:, blob: and data: actions have opaque origins; there is no recipient to discover.
++    if (action->origin().is_opaque())
++        return fail("insecure-action"sv);
+ 
+     // 3. The slot binds the envelope to this origin, this action (origin + path), and this field name.
+     auto action_origin = action->origin().serialize();
+@@ -161,6 +194,7 @@ void SealedField::start()
+     m_slot_aad = MUST(ByteBuffer::copy(slot.bytes()));
+ 
+     // 4. Fetch the recipient's key set: CORS mode, no credentials, from the action origin.
++    // Defensive: a tuple origin always serializes to a parsable URL prefix.
+     auto well_known_url = URL::Parser::basic_parse(MUST(String::formatted("{}{}", action_origin, well_known_path)));
+     if (!well_known_url.has_value())
+         return fail("recipient-unreachable"sv);
+@@ -173,7 +207,9 @@ void SealedField::start()
+     request->set_credentials_mode(Fetch::Infrastructure::Request::CredentialsMode::Omit);
+ 
+     Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
+-    fetch_algorithms_input.process_response_consume_body = [this](auto response, auto body_bytes) {
++    fetch_algorithms_input.process_response_consume_body = [this, fetch_generation](auto response, auto body_bytes) {
++        if (fetch_generation != m_fetch_generation)
++            return;
+         m_fetch_controller = nullptr;
+         response = response->unsafe_response();
+         if (!Fetch::Infrastructure::is_ok_status(response->status()))
+@@ -268,7 +304,8 @@ bool SealedField::constraints_satisfied(Utf16View plaintext) const
+ {
+     if (plaintext.is_empty())
+         return !m_constraints.required;
+-    auto length = plaintext.length_in_code_points();
++    // HTML measures minlength/maxlength in JavaScript string length (UTF-16 code units).
++    auto length = plaintext.length_in_code_units();
+     if (m_constraints.minlength.has_value() && length < *m_constraints.minlength)
+         return false;
+     if (m_constraints.maxlength.has_value() && length > *m_constraints.maxlength)
+@@ -285,13 +322,11 @@ void SealedField::update_validity(Utf16View plaintext)
+ }
+ 
+ // Plaintext is length-prefixed and zero-padded to 32 bytes so the envelope reveals length only to a bucket.
+-static ErrorOr<ByteBuffer> pad_plaintext(String const& utf8)
++static ByteBuffer pad_plaintext(ReadonlyBytes bytes)
+ {
+-    auto bytes = utf8.bytes();
+-    if (bytes.size() > 0xffff)
+-        return Error::from_string_literal("sealed value exceeds 65535 bytes");
++    VERIFY(bytes.size() <= max_plaintext_bytes);
+     auto total = ((2 + bytes.size() + pad_block - 1) / pad_block) * pad_block;
+-    auto out = TRY(ByteBuffer::create_zeroed(total));
++    auto out = MUST(ByteBuffer::create_zeroed(total));
+     out[0] = static_cast<u8>(bytes.size() >> 8);
+     out[1] = static_cast<u8>(bytes.size() & 0xff);
+     out.overwrite(2, bytes.data(), bytes.size());
+@@ -309,10 +344,21 @@ void SealedField::reseal(Utf16View plaintext)
+         m_envelope = {};
+         return;
+     }
+-    auto padded = pad_plaintext(plaintext.to_utf8_but_should_be_ported_to_utf16());
+-    if (padded.is_error())
+-        return fail("recipient-invalid"sv);
+-    auto sealed = ::Crypto::HPKE::seal(m_recipient_public_key, hpke_info.bytes(), m_slot_aad, padded.value());
++
++    // The two-byte length prefix caps a value at 65535 UTF-8 bytes. Exceeding it is the user's input
++    // failing a constraint, not a recipient fault, so the field stays ready and reports invalid.
++    auto utf8 = plaintext.to_utf8_but_should_be_ported_to_utf16();
++    if (utf8.bytes().size() > max_plaintext_bytes) {
++        auto message = Utf16String::from_utf8(invalid_message);
++        m_element->set_custom_validity(message);
++        m_envelope = {};
++        return;
++    }
++
++    auto padded = pad_plaintext(utf8.bytes());
++    auto sealed = ::Crypto::HPKE::seal(m_recipient_public_key, hpke_info.bytes(), m_slot_aad, padded);
++    // The well-known JWK was syntactically valid, but the engine only learns whether x/y form a usable
++    // curve point at the first seal. This is the deferred half of the recipient-invalid check.
+     if (sealed.is_error())
+         return fail("recipient-invalid"sv);
+     auto enc = MUST(encode_base64url(sealed.value().enc, AK::OmitPadding::Yes));
+diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
+index c571f247..c6b1df9d 100644
+--- a/Libraries/LibWeb/HTML/SealedField.h
++++ b/Libraries/LibWeb/HTML/SealedField.h
+@@ -62,6 +62,7 @@ private:
+ 
+     GC::Ref<HTMLInputElement> m_element;
+     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
++    u64 m_fetch_generation { 0 };
+ 
+     String m_kid;
+     ByteBuffer m_recipient_public_key;
+-- 
+2.55.0
+

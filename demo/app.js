@@ -5,6 +5,7 @@ const responseBox = document.getElementById('response');
 
 function render(extra = '') {
   observed.textContent = [
+    `constructor = ${field.constructor.name}`,
     `sealed-input.value = ${JSON.stringify(field.value)}`,
     `FormData.get('ssn') = ${JSON.stringify(new FormData(form).get('ssn'))}`,
     `checkValidity() = ${field.checkValidity()}`,
