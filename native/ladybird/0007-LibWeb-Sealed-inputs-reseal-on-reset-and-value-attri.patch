@@ -1,5 +1,5 @@
-From 1b436ec2a7e4a458e669e56df67dc0fb81bbd4f6 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 31a8d3039a06e13d1be9eb41669eaa73f03565b5 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 22:18:51 -0500
 Subject: [PATCH 07/13] LibWeb: Sealed inputs reseal on reset and value
  attribute changes; detach on form owner change
@@ -111,7 +111,7 @@ index 4f8157d7..6c0ee931 100644
      Utf16String m_last_src_value;
  
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 33d39c3f..9c780736 100644
+index c95c72c8..a9965056 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -396,8 +396,8 @@ void SealedField::reseal(Utf16View plaintext)

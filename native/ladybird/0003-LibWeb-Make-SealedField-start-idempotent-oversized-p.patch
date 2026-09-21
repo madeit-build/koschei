@@ -1,5 +1,5 @@
-From 14382582abdb99a38c00aae24129e51bc14f3168 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From acfc01b27fea4a42e01da1ed45a684c82bd6df4e Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 21:24:53 -0500
 Subject: [PATCH 03/13] LibWeb: Make SealedField::start idempotent; oversized
  plaintext is a constraint, not a recipient failure
@@ -10,7 +10,7 @@ Subject: [PATCH 03/13] LibWeb: Make SealedField::start idempotent; oversized
  2 files changed, 61 insertions(+), 14 deletions(-)
 
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 116b8070..57ecd84d 100644
+index b9e6b4ea..eee1091c 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -46,6 +46,7 @@ static constexpr StringView well_known_path = "/.well-known/sealed-input"sv;
@@ -167,7 +167,7 @@ index 116b8070..57ecd84d 100644
          return fail("recipient-invalid"sv);
      auto enc = MUST(encode_base64url(sealed.value().enc, AK::OmitPadding::Yes));
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
-index c571f247..c6b1df9d 100644
+index aed3b549..f320b337 100644
 --- a/Libraries/LibWeb/HTML/SealedField.h
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -62,6 +62,7 @@ private:

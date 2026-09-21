@@ -1,5 +1,5 @@
-From e464daaa6a2a6d9cc96e729f4d1e6155129772bb Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From bbafa5b375f9d9ff68aa36a49df3d54b35e9e573 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 22:09:00 -0500
 Subject: [PATCH 05/13] LibWeb: Sealed inputs reseal on every value write, hold
  required when untouched, and restart on reinsertion
@@ -95,7 +95,7 @@ index 3472a0b3..4f8157d7 100644
          if (!direction.has_value())
              return {};
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 75b1d5b2..ff85326d 100644
+index e3a25deb..eb76652f 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -271,24 +271,39 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
@@ -204,7 +204,7 @@ index 75b1d5b2..ff85326d 100644
  
  }
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
-index ada5626d..eb071c28 100644
+index bad7d349..f2ed7fc0 100644
 --- a/Libraries/LibWeb/HTML/SealedField.h
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -37,6 +37,7 @@ public:

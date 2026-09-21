@@ -1,5 +1,5 @@
-From ab340ec810c4ecad7adf8f3406edfe3d862e4b8d Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 1738f5f1c426f5e6b4aeb160ff16f1b30b60b42c Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 22:54:03 -0500
 Subject: [PATCH 09/13] LibWeb: Add <sealedinput> and the sealed-fields CSP
  directive, with Text tests
@@ -90,12 +90,12 @@ index ee0efff5..dd412227 100644
  class HTMLSlotElement;
 diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 new file mode 100644
-index 00000000..14e4fe82
+index 00000000..1cc61af7
 --- /dev/null
 +++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 @@ -0,0 +1,29 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */
@@ -125,12 +125,12 @@ index 00000000..14e4fe82
 +}
 diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
 new file mode 100644
-index 00000000..1b49fb7b
+index 00000000..df6509a2
 --- /dev/null
 +++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
 @@ -0,0 +1,29 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */

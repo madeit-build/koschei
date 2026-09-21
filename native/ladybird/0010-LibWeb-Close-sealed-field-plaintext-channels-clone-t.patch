@@ -1,5 +1,5 @@
-From a0ca629a5ab947b95514497e689e31ee96dacdc8 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 35ee8b0444259926df4381b802996c0474c63592 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Sat, 19 Sep 2026 19:01:04 -0500
 Subject: [PATCH 10/13] LibWeb: Close sealed-field plaintext channels (clone,
  type change, paste, detach); apply form-action at discovery; re-evaluate the
@@ -111,7 +111,7 @@ index 81d7bbee..29f40b2e 100644
      readonly attribute NodeList? labels;
  
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 4d61c86c..a4d422b0 100644
+index 1b090c52..e9d0dc71 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -9,12 +9,14 @@
