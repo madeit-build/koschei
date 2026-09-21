@@ -283,7 +283,7 @@ docs/
   specs/explainer.md        WICG-template explainer
   specs/native-ladybird-design.md           native design: hooks, security boundary
   plans/                    implementation plans the polyfill and native work ran from
-  posts/                    the WICG Discourse post
+  posts/                    the WICG/proposals issue, body and first comment
 native/ladybird/
   0001..0013-*.patch        the <sealedinput> series against Ladybird 1010a932
   apply-and-build.sh        apply the series to a checkout and build
