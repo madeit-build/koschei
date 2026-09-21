@@ -1,5 +1,5 @@
-From ab9dcc7de40b9517626a0b46c924d1dddbc89fd5 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 0b0937faadef56d864e715fa0a9882aaa3bf5dd8 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 21:13:09 -0500
 Subject: [PATCH 02/13] LibWeb: Add SealedField, the shared core for sealed
  form fields
@@ -39,12 +39,12 @@ index 724e5909..ee0efff5 100644
  class SharedResourceRequest;
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
 new file mode 100644
-index 00000000..116b8070
+index 00000000..b9e6b4ea
 --- /dev/null
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -0,0 +1,332 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */
@@ -377,12 +377,12 @@ index 00000000..116b8070
 +}
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
 new file mode 100644
-index 00000000..c571f247
+index 00000000..aed3b549
 --- /dev/null
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -0,0 +1,77 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */

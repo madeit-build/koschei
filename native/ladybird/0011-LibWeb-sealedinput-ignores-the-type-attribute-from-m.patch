@@ -1,5 +1,5 @@
-From 7f243400f0842843b0b590571792404f17b73e36 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From a09e31c6918b7a1c461aefcf20cf633cb72b72ed Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Sat, 19 Sep 2026 19:03:52 -0500
 Subject: [PATCH 11/13] LibWeb: <sealedinput> ignores the type attribute from
  markup too
@@ -12,7 +12,7 @@ Subject: [PATCH 11/13] LibWeb: <sealedinput> ignores the type attribute from
  4 files changed, 15 insertions(+)
 
 diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
-index 14e4fe82..1598961a 100644
+index 1cc61af7..10648396 100644
 --- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 +++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 @@ -4,6 +4,7 @@
@@ -38,7 +38,7 @@ index 14e4fe82..1598961a 100644
 +
  }
 diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
-index 1b49fb7b..1681cc3b 100644
+index df6509a2..03bce993 100644
 --- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
 +++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.h
 @@ -24,6 +24,7 @@ public:

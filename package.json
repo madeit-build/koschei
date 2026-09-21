@@ -2,6 +2,7 @@
   "name": "koschei",
   "version": "0.0.0",
   "private": true,
+  "license": "BSD-2-Clause",
   "type": "module",
   "description": "A form field the page cannot read. Polyfill and explainer for <sealed-input>.",
   "engines": { "node": ">=23" },

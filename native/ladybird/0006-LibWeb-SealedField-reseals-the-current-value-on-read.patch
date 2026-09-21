@@ -1,5 +1,5 @@
-From a654ed2ab770b62e1de1e48392bb95e460a6dd9b Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 8152387ee87da0661e0b883c8f2c1dac81f0db54 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 22:10:55 -0500
 Subject: [PATCH 06/13] LibWeb: SealedField reseals the current value on ready
 
@@ -8,7 +8,7 @@ Subject: [PATCH 06/13] LibWeb: SealedField reseals the current value on ready
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index ff85326d..33d39c3f 100644
+index eb76652f..c95c72c8 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -271,8 +271,12 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)

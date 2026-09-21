@@ -1,5 +1,5 @@
-From 077af8a091b68b23ae1f725bfe8a7cd88859a24e Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 4263912afadab43b20d0a84efa27c5ddffe28ce5 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 21:51:23 -0500
 Subject: [PATCH 04/13] LibWeb: Route sealed inputs through SealedField (value,
  events, selection, validity)
@@ -424,7 +424,7 @@ index e50ccad9..3df271ed 100644
      input_event_init.bubbles = true;
      input_event_init.composed = true;
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 57ecd84d..75b1d5b2 100644
+index eee1091c..e3a25deb 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -44,6 +44,7 @@ static constexpr StringView envelope_version = "sealed1"sv;
@@ -508,7 +508,7 @@ index 57ecd84d..75b1d5b2 100644
  
  }
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
-index c6b1df9d..ada5626d 100644
+index f320b337..bad7d349 100644
 --- a/Libraries/LibWeb/HTML/SealedField.h
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -59,6 +59,7 @@ private:

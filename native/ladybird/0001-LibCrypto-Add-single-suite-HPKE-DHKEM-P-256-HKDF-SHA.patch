@@ -1,5 +1,5 @@
-From 9aeca46123f548d134591b7c4ea4d3d6c948dc59 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 2de605847454490d55e89501e230961769b46c87 Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 20:55:13 -0500
 Subject: [PATCH 01/13] LibCrypto: Add single-suite HPKE (DHKEM P-256,
  HKDF-SHA256, AES-128-GCM) with RFC 9180 A.3.1 tests
@@ -29,12 +29,12 @@ index 599f7902..a5a8aa08 100644
      PK/MLKEM.cpp
 diff --git a/Libraries/LibCrypto/HPKE.cpp b/Libraries/LibCrypto/HPKE.cpp
 new file mode 100644
-index 00000000..316fad0d
+index 00000000..fe1eebf4
 --- /dev/null
 +++ b/Libraries/LibCrypto/HPKE.cpp
 @@ -0,0 +1,191 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */
@@ -226,12 +226,12 @@ index 00000000..316fad0d
 +}
 diff --git a/Libraries/LibCrypto/HPKE.h b/Libraries/LibCrypto/HPKE.h
 new file mode 100644
-index 00000000..3025a58b
+index 00000000..03bc7abb
 --- /dev/null
 +++ b/Libraries/LibCrypto/HPKE.h
 @@ -0,0 +1,38 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */
@@ -282,12 +282,12 @@ index 486ce9cf..18e02021 100644
      TestPBKDF2.cpp
 diff --git a/Tests/LibCrypto/TestHPKE.cpp b/Tests/LibCrypto/TestHPKE.cpp
 new file mode 100644
-index 00000000..51c339b8
+index 00000000..bac229bf
 --- /dev/null
 +++ b/Tests/LibCrypto/TestHPKE.cpp
 @@ -0,0 +1,67 @@
 +/*
-+ * Copyright (c) 2026, Matt deClercq <matthew.declercq@gmail.com>
++ * Copyright (c) 2026, Matt deClercq <matt@madeit.build>
 + *
 + * SPDX-License-Identifier: BSD-2-Clause
 + */

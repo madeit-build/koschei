@@ -1,5 +1,5 @@
-From ecc2961d51db27647810e50a87bc3aeac039f5f0 Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From f2674fc4df83f6d7c925b739864fb19b33a9327e Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Fri, 18 Sep 2026 22:30:01 -0500
 Subject: [PATCH 08/13] LibWeb: Gate the sealed-field restart on field state;
  seal m_value, not the text node
@@ -61,7 +61,7 @@ index 6c0ee931..973d007a 100644
      Utf16String m_last_src_value;
  
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index 9c780736..4d61c86c 100644
+index a9965056..1b090c52 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -273,7 +273,7 @@ void SealedField::become_ready(String kid, ByteBuffer recipient_public_key)
@@ -83,7 +83,7 @@ index 9c780736..4d61c86c 100644
  
  // Removal from the document: forget the recipient entirely. The slot AAD is derived from the owning form's action,
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
-index eb071c28..b2842c35 100644
+index f2ed7fc0..9f52157b 100644
 --- a/Libraries/LibWeb/HTML/SealedField.h
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -42,6 +42,7 @@ public:

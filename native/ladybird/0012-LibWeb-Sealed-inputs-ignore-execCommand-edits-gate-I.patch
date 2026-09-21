@@ -1,5 +1,5 @@
-From 587818b9962d87e0494fb2a5cf40113495fc146c Mon Sep 17 00:00:00 2001
-From: Matt deClercq <matthew.declercq@gmail.com>
+From 9158887e1b00980532d8c9958cdac4d602c700ed Mon Sep 17 00:00:00 2001
+From: Matt deClercq <matt@madeit.build>
 Date: Sat, 19 Sep 2026 19:40:06 -0500
 Subject: [PATCH 12/13] LibWeb: Sealed inputs ignore execCommand edits, gate
  IME before ready, re-derive the slot on rename or retarget; LibCrypto:
@@ -22,7 +22,7 @@ Subject: [PATCH 12/13] LibWeb: Sealed inputs ignore execCommand edits, gate
  13 files changed, 142 insertions(+), 14 deletions(-)
 
 diff --git a/Libraries/LibCrypto/HPKE.cpp b/Libraries/LibCrypto/HPKE.cpp
-index 316fad0d..db0b01c0 100644
+index fe1eebf4..d2811eb8 100644
 --- a/Libraries/LibCrypto/HPKE.cpp
 +++ b/Libraries/LibCrypto/HPKE.cpp
 @@ -4,7 +4,6 @@
@@ -198,7 +198,7 @@ index 518fe7f8..d7d7d4c1 100644
  
      virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) const override;
 diff --git a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
-index 1598961a..11a91ab0 100644
+index 10648396..6bee5758 100644
 --- a/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 +++ b/Libraries/LibWeb/HTML/HTMLSealedInputElement.cpp
 @@ -6,7 +6,6 @@
@@ -259,7 +259,7 @@ index 3df271ed..12e4451f 100644
      return true;
  }
 diff --git a/Libraries/LibWeb/HTML/SealedField.cpp b/Libraries/LibWeb/HTML/SealedField.cpp
-index a4d422b0..e4986522 100644
+index e9d0dc71..077ca17a 100644
 --- a/Libraries/LibWeb/HTML/SealedField.cpp
 +++ b/Libraries/LibWeb/HTML/SealedField.cpp
 @@ -13,7 +13,6 @@
@@ -317,7 +317,7 @@ index a4d422b0..e4986522 100644
  }
  
 diff --git a/Libraries/LibWeb/HTML/SealedField.h b/Libraries/LibWeb/HTML/SealedField.h
-index b2842c35..9b71975c 100644
+index 9f52157b..ea56a4ee 100644
 --- a/Libraries/LibWeb/HTML/SealedField.h
 +++ b/Libraries/LibWeb/HTML/SealedField.h
 @@ -28,8 +28,8 @@ class SealedField final : public GC::Cell {
@@ -332,7 +332,7 @@ index b2842c35..9b71975c 100644
  
      virtual ~SealedField() override = default;
 diff --git a/Tests/LibCrypto/TestHPKE.cpp b/Tests/LibCrypto/TestHPKE.cpp
-index 51c339b8..6c11d7b6 100644
+index bac229bf..44073638 100644
 --- a/Tests/LibCrypto/TestHPKE.cpp
 +++ b/Tests/LibCrypto/TestHPKE.cpp
 @@ -65,3 +65,34 @@ TEST_CASE(round_trip_with_fresh_keys)
