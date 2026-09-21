@@ -1,8 +1,8 @@
 # Proposal: sealed form fields (a field whose value the page cannot read)
 
-*Draft for WICG Discourse, category "APIs". Everything here argues from
+_Draft for WICG Discourse, category "APIs". Everything here argues from
 [the explainer](../specs/explainer.md); anything in this post that is not in
-the explainer is a bug in the post.*
+the explainer is a bug in the post._
 
 ---
 
@@ -10,7 +10,7 @@ There is no declarative way for a web page to say "this value is not for me."
 
 TLS protects a form value between the browser and the first server that
 terminates the connection. WebAuthn took passwords out of the authentication
-path. Neither touches sensitive data *submission*: a card number, a national ID,
+path. Neither touches sensitive data _submission_: a card number, a national ID,
 a medical answer, an API key pasted into a settings page. Today that value is
 readable by every script on the page from the first keystroke, and it is
 plaintext in the request handler, the CDN, the WAF, the APM trace, and the
@@ -42,8 +42,8 @@ form's `action`, fetches `https://api.example.com/.well-known/sealed-input`
 (a JWK Set), and seals every edit to that key. `FormData`, `requestSubmit()`,
 constraint validation, `reset()`, and every form library that treats `.value`
 as an opaque string keep working. `.value` returns the envelope. The server
-opens it with one call that also checks the envelope was sealed *for this
-origin, this action, and this field name*; a ciphertext lifted from one site
+opens it with one call that also checks the envelope was sealed _for this
+origin, this action, and this field name_; a ciphertext lifted from one site
 opens nowhere else.
 
 A companion CSP directive seals plain inputs by `autocomplete` field name, so
@@ -63,8 +63,7 @@ almost every real skimmer is, see ciphertext and nothing else.
 **Out of scope, on purpose:** a compromised renderer process, and the recipient
 itself. The recipient sees plaintext after decryption regardless; this adds no
 party that would not already hold the value. On the renderer: no existing form
-control, CSP, or Trusted Types defends against a compromised renderer either,
-and we hold this to the same bar, not a higher one. The explainer sketches a
+control, CSP, or Trusted Types defends against a compromised renderer either. The explainer sketches a
 trusted-path variant where the process that first receives keystrokes seals
 them, and shows one engine whose topology already supports it. The API surface
 is identical either way.
