@@ -292,3 +292,8 @@ tests/                      vitest unit suites, including RFC 9180 known-answer 
 vitest.config.ts
 playwright.config.ts
 ```
+
+## License
+
+BSD-2-Clause, the same terms the Ladybird patches in `native/ladybird/` carry.
+See [LICENSE](LICENSE).

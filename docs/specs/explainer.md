@@ -8,7 +8,7 @@
 
 ## Participate
 
-- Repository: this repo (issues welcome once published)
+- Repository: https://github.com/madeit-build/koschei (issues welcome)
 - Prior-art survey: [docs/research/prior-art.md](../research/prior-art.md)
 
 ## Introduction
