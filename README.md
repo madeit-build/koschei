@@ -279,18 +279,27 @@ Three questions, answered separately, so nobody reads "sealed" as "authenticated
 bin/koschei.ts              CLI entry: init, doctor
 docs/
   research/prior-art.md     what exists, what stalled, why
+  research/native-feasibility-ladybird.md   results of the native demo, deviations list
   specs/explainer.md        WICG-template explainer
+  specs/native-ladybird-design.md           native design: hooks, security boundary
+  plans/                    implementation plans the polyfill and native work ran from
+  posts/                    the WICG Discourse post
+native/ladybird/
+  0001..0013-*.patch        the <sealedinput> series against Ladybird 1010a932
+  apply-and-build.sh        apply the series to a checkout and build
+  run-demo.sh               headless proof: Ladybird envelopes opened by unseal()
 src/
   envelope.ts, hpke.ts, seal.ts   envelope format, HPKE suite, client seal
   element/                  <sealed-input> and recipient discovery
   frame/                    the sealed frame document and protocol, served by the recipient
   server/                   unseal(), init, doctor
-demo/                       reference two-origin server + page proving the round trip
+demo/                       reference two-origin server + pages proving the round trip
 e2e/                        Playwright browser proof (npm run e2e)
 scripts/build.ts            esbuild bundle of the element and the frame into dist/
 tests/                      vitest unit suites, including RFC 9180 known-answer tests
 vitest.config.ts
 playwright.config.ts
+LICENSE                     BSD-2-Clause
 ```
 
 ## License
